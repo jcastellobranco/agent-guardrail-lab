@@ -1,11 +1,62 @@
-import {cpus,totalmem,platform,release} from 'node:os';
-import {mkdir,writeFile,readFile} from 'node:fs/promises';
-import {execFileSync} from 'node:child_process';
-import {setPolicy,token,waitPolicy} from '../../scripts/compose-demo.mjs';
-const out='benchmarks/results';await mkdir(out,{recursive:true});
-const machine={cpu:cpus()[0]?.model,logicalCpus:cpus().length,memoryBytes:totalmem(),platform:platform(),kernel:release(),node:process.version,docker:execFileSync('docker',['version','--format','{{.Server.Version}}'],{encoding:'utf8'}).trim(),timestamp:new Date().toISOString()};
-await writeFile(`${out}/machine.json`,JSON.stringify(machine,null,2));
-const budget=Number(process.env.BENCHMARK_BUDGET_MS??50);
-try{for(const probes of [false,true]){const v=await setPolicy({probes,budget,failMode:'closed'}),jwt=await token();await waitPolicy(jwt,v);if(probes)execFileSync('docker',['compose','exec','-T','inference-service','python','-c',"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/ready')"],{stdio:'inherit'});const name=probes?'with-probes':'without-probes';execFileSync('k6',['run','--summary-export',`${out}/${name}.json`,'tests/load/check.js'],{env:{...process.env,AGENT_TOKEN:jwt},stdio:'inherit'});}}
-finally{await setPolicy({probes:false,budget:50});}
-const results=[];for(const name of ['without-probes','with-probes']){const d=JSON.parse(await readFile(`${out}/${name}.json`,'utf8'));const m=d.metrics.valid_check_latency_ms;results.push({scenario:name,p50:m?.['p(50)'],p95:m?.['p(95)'],p99:m?.['p(99)'],degradedRate:d.metrics.degraded_decisions?.value??d.metrics.degraded_decisions?.rate,probeScoredRate:d.metrics.probe_scored?.value??d.metrics.probe_scored?.rate,requests:d.metrics.http_reqs?.count});}await writeFile(`${out}/summary.json`,JSON.stringify({machine,budget,results},null,2));console.log(results);
+import { cpus, totalmem, platform, release } from 'node:os';
+import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { setPolicy, token, waitPolicy } from '../../scripts/compose-demo.mjs';
+
+const output = process.env.BENCHMARK_OUTPUT ?? 'benchmarks/results';
+const budget = Number(process.env.BENCHMARK_BUDGET_MS ?? 50);
+const vus = Number(process.env.VUS ?? 5);
+const duration = process.env.DURATION ?? '30s';
+await mkdir(output, { recursive: true });
+const machine = {
+  cpu: cpus()[0]?.model,
+  logicalCpus: cpus().length,
+  memoryBytes: totalmem(),
+  platform: platform(),
+  kernel: release(),
+  node: process.version,
+  docker: execFileSync('docker', ['version', '--format', '{{.Server.Version}}'], { encoding: 'utf8' }).trim(),
+  timestamp: new Date().toISOString(),
+  commit: process.env.GITHUB_SHA ?? null,
+};
+await writeFile(`${output}/machine.json`, JSON.stringify(machine, null, 2));
+
+const results = [];
+try {
+  for (const probes of [false, true]) {
+    const version = await setPolicy({ probes, budget, failMode: 'closed' });
+    const jwt = await token();
+    await waitPolicy(jwt, version);
+    const scenario = probes ? 'with-probes' : 'without-probes';
+    const rawPath = `${output}/${scenario}.json`;
+    const env = { ...process.env, AGENT_TOKEN: jwt, BENCHMARK_BUDGET_MS: String(budget) };
+    execFileSync('k6', ['run', 'tests/load/check.js'], {
+      env: { ...env, VUS: '1', DURATION: '5s' },
+      stdio: 'inherit',
+    });
+    execFileSync('k6', ['run', '--summary-export', rawPath, 'tests/load/check.js'], {
+      env,
+      stdio: 'inherit',
+    });
+    const { metrics } = JSON.parse(await readFile(rawPath, 'utf8'));
+    const latency = metrics.valid_check_latency_ms;
+    if (!latency || !metrics.http_reqs?.count) throw new Error('No valid benchmark samples');
+    results.push({
+      scenario,
+      p50: latency['p(50)'],
+      p95: latency['p(95)'],
+      p99: latency['p(99)'],
+      requests: metrics.http_reqs.count,
+      requestsPerSecond: metrics.http_reqs.rate,
+      httpFailureRate: metrics.http_req_failed?.value,
+      invalidEvaluationRate: 1 - metrics.checks.value,
+      budgetViolationRate: metrics.budget_violation?.value,
+      degradedRate: metrics.degraded_decisions?.value,
+      probeScoredRate: metrics.probe_scored?.value,
+    });
+    await writeFile(`${output}/summary.json`, JSON.stringify({ machine, budget, vus, duration, results }, null, 2));
+  }
+} finally {
+  await setPolicy({ probes: false, budget: 50 });
+}
+console.log('BENCHMARK_RESULT', JSON.stringify({ machine, budget, vus, duration, results }));
