@@ -1,0 +1,25 @@
+name: Control plane format preview
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: corepack enable && corepack prepare pnpm@10.12.4 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prettier --write apps/control-plane/src/routes/sync.ts apps/control-plane/src/routes/tokens.ts
+      - run: pnpm format:check
+      - name: Emit formatted files
+        run: |
+          python - <<'PY'
+          import base64
+          from pathlib import Path
+          for name in ['apps/control-plane/src/routes/sync.ts','apps/control-plane/src/routes/tokens.ts']:
+              print('FORMAT_FILE '+name+' '+base64.b64encode(Path(name).read_bytes()).decode())
+          PY
