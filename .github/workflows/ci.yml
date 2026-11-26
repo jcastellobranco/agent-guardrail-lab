@@ -15,7 +15,47 @@ jobs:
       - run: corepack enable && corepack prepare pnpm@10.12.4 --activate
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
-      - run: pnpm lint && pnpm typecheck && pnpm test && pnpm build
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: lab
+          POSTGRES_PASSWORD: lab
+          POSTGRES_DB: lab_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lab -d lab_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql://lab:lab@localhost:5432/lab_test
+      TEST_DATABASE_URL: postgresql://lab:lab@localhost:5432/lab_test
+      REQUIRE_DATABASE_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: corepack enable && corepack prepare pnpm@10.12.4 --activate
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @lab/control-plane... build
+      - name: Apply migrations
+        run: pnpm --filter @lab/database migrate
+      - name: Verify migration replay
+        run: pnpm --filter @lab/database migrate
+      - name: Run real PostgreSQL tests
+        run: pnpm --filter @lab/control-plane exec vitest run tests/database.test.ts --reporter=verbose
+      - name: PostgreSQL diagnostics
+        if: failure()
+        run: docker logs ${{ job.services.postgres.id }}
   inference:
     runs-on: ubuntu-latest
     steps:
