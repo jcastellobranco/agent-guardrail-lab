@@ -8,7 +8,14 @@ import { PromMetrics } from './infrastructure/metrics.js';
 export function buildApp(deps:{auth:TokenVerifier;store:PolicyStore;metrics?:PromMetrics;budgetMs?:number;logger?:boolean;inference?:InferenceClient;headroomMs?:number;audit?:{offer(event:AuditEvent):void}}) {
   const app=Fastify({logger:deps.logger??false,bodyLimit:65536,requestTimeout:10000,disableRequestLogging:true});
   const metrics=deps.metrics??new PromMetrics();
-  const check=new CheckToolCall(deps.auth,deps.store,metrics,deps.budgetMs,undefined,deps.inference,deps.headroomMs);
+  const check=new CheckToolCall({
+    auth: deps.auth,
+    store: deps.store,
+    metrics,
+    maxBudgetMs: deps.budgetMs,
+    inference: deps.inference,
+    headroomMs: deps.headroomMs,
+  });
   const pending=new WeakMap<object,AuditEvent>();
   app.addHook('onResponse',async request=>{const event=pending.get(request);if(event){pending.delete(request);deps.audit?.offer(event);}});
   const starts=new WeakMap<object,number>();

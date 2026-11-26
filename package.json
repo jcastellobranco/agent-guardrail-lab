@@ -14,7 +14,9 @@
     "dev": "pnpm --filter @lab/guardrail-api... build && pnpm --filter @lab/guardrail-api dev",
     "demo": "pnpm --filter @lab/guardrail-api demo",
     "keys": "pnpm --filter @lab/guardrail-api keys",
-    "demo:probes": "pnpm --filter @lab/guardrail-api demo:probes"
+    "demo:probes": "pnpm --filter @lab/guardrail-api demo:probes",
+    "format": "prettier --write \"**/*.ts\"",
+    "format:check": "prettier --check \"**/*.ts\""
   },
   "devDependencies": {
     "turbo": "2.5.4",
@@ -23,6 +25,7 @@
     "vitest": "3.2.4",
     "eslint": "9.28.0",
     "typescript-eslint": "8.34.0",
-    "@eslint/js": "9.28.0"
+    "@eslint/js": "9.28.0",
+    "prettier": "3.5.3"
   }
 }
