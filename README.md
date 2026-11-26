@@ -4,7 +4,15 @@
 
 A learning and portfolio project for latency-sensitive, tenant-aware runtime enforcement of AI agent tool calls. A local guardrail evaluates deterministic restrictions and optional activation probes before returning allow, flag or block. Centralized policy administration is separated from customer-side enforcement, auditing and model inference. This project is not an implementation or description of any real company's architecture.
 
-**Status: v0.6.0 source implementation.** Python offline tests executed; full Node dependencies, database integration, real-model evaluation, Docker/Helm and benchmarks still require an online development or CI environment. Do not use this lab as a production security boundary.
+**Status:** CI-validated learning project with PostgreSQL integration, container builds, model evaluation and measured runtime benchmarks. Not a production security boundary.
+
+## Engineering highlights
+
+- Local enforcement separates the latency-sensitive data plane from centralized policy administration.
+- Signed policy snapshots and tenant-scoped authentication support disconnected enforcement.
+- PostgreSQL integration tests run against a disposable database in CI.
+- Measured deterministic throughput reached 2,703 requests/s at five virtual users, with p99 of 4.78 ms on a four-CPU hosted runner.
+- CPU inference is a known bottleneck: the five-user probe scenario was entirely degraded under a 50 ms budget. See the [measured report](benchmarks/runtime-2026-11-26.md).
 
 ## Architecture
 
@@ -126,7 +134,7 @@ helm template lab infrastructure/helm/data-plane
 helm upgrade --install lab infrastructure/helm/data-plane
 ```
 
-CI runs TS lint/typecheck/tests/build, Python tests, actual candidate probe training and an FPR regression gate against the PR base, image builds, Compose integration, and Helm lint/render. The FPR gate rejects incomparable dataset/split/threshold metadata and regressions >5 percentage points, with a 60% bootstrap ceiling for toy data. The gate and release workflows have not yet executed. Neon PR branch workflow creates schema-only branches, creates a fresh temporary database per CI run (role requires CREATEDB), migrates and tests, deletes on PR close and sets expiration. Tags like `v0.6.0` trigger image builds to GHCR and keyless Cosign signatures by digest. Use protected tags and required CI checks before releasing; no images or tags have been published from this environment.
+CI runs TS lint/typecheck/tests/build, Python tests, actual candidate probe training and an FPR regression gate against the PR base, image builds, Compose integration, and Helm lint/render. The FPR gate rejects incomparable dataset/split/threshold metadata and regressions >5 percentage points, with a 60% bootstrap ceiling for toy data. The probe gate runs in CI; release publishing is not verified here. Neon PR branch workflow creates schema-only branches, creates a fresh temporary database per CI run (role requires CREATEDB), migrates and tests, deletes on PR close and sets expiration. Tags like `v0.6.0` trigger image builds to GHCR and keyless Cosign signatures by digest. Use protected tags and required CI checks before releasing; no images or tags have been published from this environment.
 
 ## Tests and benchmarks
 
