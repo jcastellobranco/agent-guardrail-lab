@@ -15,6 +15,7 @@ from .probes import ProbeBank, load_artifacts
 
 class BodyLimit:
     """Bound bytes before Pydantic sees the body, including chunked requests."""
+
     def __init__(self, app, limit=65536):
         self.app, self.limit = app, limit
 
@@ -29,16 +30,20 @@ class BodyLimit:
             chunk = message.get("body", b"")
             size += len(chunk)
             if size > self.limit:
-                return await JSONResponse({"detail": "PAYLOAD_TOO_LARGE"}, 413)(scope, receive, send)
+                return await JSONResponse({"detail": "PAYLOAD_TOO_LARGE"}, 413)(
+                    scope, receive, send
+                )
             parts.append(chunk)
             if not message.get("more_body", False):
                 break
+
         async def replay():
             if parts:
                 body = b"".join(parts)
                 parts.clear()
                 return {"type": "http.request", "body": body, "more_body": False}
             return await receive()
+
         await self.app(scope, replay, send)
 
 
@@ -49,7 +54,7 @@ def production_bank():
     if expected and not any(p.version == expected for p in artifacts):
         raise ValueError("expected probe version missing")
     bank = ProbeBank(embedder, artifacts)
-    embedder.embed('warmup')
+    embedder.embed("warmup")
     return bank
 
 
@@ -81,8 +86,11 @@ def create_app(bank_factory=production_bank):
 
     @app.get("/health/ready")
     async def ready():
-        return {"status": "ready", "modelVersion": app.state.bank.embedder.model_version,
-                "probeIds": sorted(app.state.bank.indices)}
+        return {
+            "status": "ready",
+            "modelVersion": app.state.bank.embedder.model_version,
+            "probeIds": sorted(app.state.bank.indices),
+        }
 
     @app.post("/v1/score", response_model=ScoreResponse)
     async def score(request: ScoreRequest):
@@ -99,6 +107,7 @@ def create_app(bank_factory=production_bank):
             finally:
                 # A cancelled HTTP request must not free the slot while PyTorch is still running.
                 app.state.slot.release()
+
         try:
             future = asyncio.get_running_loop().run_in_executor(app.state.pool, work)
         except BaseException:
@@ -110,8 +119,11 @@ def create_app(bank_factory=production_bank):
             raise HTTPException(422, "TOKEN_LIMIT_EXCEEDED") from None
         except Exception:
             raise HTTPException(503, "INFERENCE_FAILED") from None
-        return ScoreResponse(scores=scores, modelVersion=bank.embedder.model_version,
-                             latencyMs=(perf_counter() - start) * 1000)
+        return ScoreResponse(
+            scores=scores,
+            modelVersion=bank.embedder.model_version,
+            latencyMs=(perf_counter() - start) * 1000,
+        )
 
     return app
 

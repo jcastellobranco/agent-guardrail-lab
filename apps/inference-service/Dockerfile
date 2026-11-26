@@ -1,8 +1,8 @@
 FROM python:3.12-slim AS build
 RUN python -m venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
-COPY apps/inference-service/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu && pip install --no-cache-dir -r /tmp/requirements.txt
+COPY apps/inference-service/requirements.lock.txt /tmp/requirements.lock.txt
+RUN pip install --no-cache-dir torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu && pip install --no-cache-dir -r /tmp/requirements.lock.txt
 FROM python:3.12-slim AS runtime
 ENV PATH=/opt/venv/bin:$PATH PYTHONUNBUFFERED=1 HF_HOME=/model-cache PROBE_DIR=/artifacts
 RUN groupadd -g 10001 lab && useradd -u 10001 -g lab -m lab && mkdir /model-cache /artifacts && chown lab:lab /model-cache /artifacts

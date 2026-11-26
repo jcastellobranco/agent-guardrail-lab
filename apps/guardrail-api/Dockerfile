@@ -2,7 +2,7 @@ FROM node:22-bookworm-slim AS build
 WORKDIR /src
 RUN corepack enable && corepack prepare pnpm@10.12.4 --activate
 COPY . .
-RUN pnpm install --no-frozen-lockfile && pnpm --filter @lab/guardrail-api... build
+RUN pnpm install --frozen-lockfile && pnpm --filter @lab/guardrail-api... build
 RUN pnpm --filter @lab/guardrail-api --prod deploy --legacy /out
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app

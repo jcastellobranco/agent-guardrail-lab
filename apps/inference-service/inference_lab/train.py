@@ -1,4 +1,5 @@
 """Train an immutable linear probe; held-out rows never fit the estimator."""
+
 import argparse
 import csv
 import hashlib
@@ -16,8 +17,15 @@ from .probes import Evaluation, ProbeArtifact
 
 def tool_text(prompt: str) -> str:
     # Same field order and compact JSON format as the guardrail's tool-text encoder.
-    return json.dumps({"tool":"transfer_money", "arguments":{"amount":500,"note":"ordinary"},
-                       "context":{"prompt":prompt}}, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(
+        {
+            "tool": "transfer_money",
+            "arguments": {"amount": 500, "note": "ordinary"},
+            "context": {"prompt": prompt},
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def read_dataset(path: Path):
@@ -32,26 +40,53 @@ def read_dataset(path: Path):
     return texts, labels, hashlib.sha256(raw).hexdigest()
 
 
-def train(embedder: Embedder, dataset: Path, probe_id: str, version: str,
-          seed: int = 42, threshold: float = 0.5) -> ProbeArtifact:
+def train(
+    embedder: Embedder,
+    dataset: Path,
+    probe_id: str,
+    version: str,
+    seed: int = 42,
+    threshold: float = 0.5,
+) -> ProbeArtifact:
     texts, y, digest = read_dataset(dataset)
-    train_idx, test_idx = train_test_split(np.arange(len(y)), test_size=0.25,
-                                           random_state=seed, stratify=y)
+    train_idx, test_idx = train_test_split(
+        np.arange(len(y)), test_size=0.25, random_state=seed, stratify=y
+    )
     x = np.stack([embedder.embed(tool_text(text)).cpu().numpy() for text in texts])
     scaler = StandardScaler().fit(x[train_idx])
-    classifier = LogisticRegression(random_state=seed, max_iter=1000).fit(scaler.transform(x[train_idx]), y[train_idx])
-    predicted = (classifier.predict_proba(scaler.transform(x[test_idx]))[:, 1] >= threshold).astype(int)
+    classifier = LogisticRegression(random_state=seed, max_iter=1000).fit(
+        scaler.transform(x[train_idx]), y[train_idx]
+    )
+    predicted = (classifier.predict_proba(scaler.transform(x[test_idx]))[:, 1] >= threshold).astype(
+        int
+    )
     tn, fp, fn, tp = confusion_matrix(y[test_idx], predicted, labels=[0, 1]).ravel()
     # Fold normalization into one affine operation for serving.
     weights = classifier.coef_[0] / scaler.scale_
     bias = classifier.intercept_[0] - np.dot(weights, scaler.mean_)
-    metrics = Evaluation(precision=float(precision_score(y[test_idx], predicted, zero_division=0)),
-        recall=float(recall_score(y[test_idx], predicted, zero_division=0)), false_positive_rate=float(fp / (fp + tn)),
-        threshold=threshold, train_size=len(train_idx), test_size=len(test_idx), true_negatives=int(tn),
-        false_positives=int(fp), false_negatives=int(fn), true_positives=int(tp))
-    return ProbeArtifact(probeId=probe_id, version=version, modelVersion=embedder.model_version,
-        inputFormat=INPUT_FORMAT, weights=weights.tolist(), bias=float(bias), metrics=metrics,
-        datasetSha256=digest, seed=seed)
+    metrics = Evaluation(
+        precision=float(precision_score(y[test_idx], predicted, zero_division=0)),
+        recall=float(recall_score(y[test_idx], predicted, zero_division=0)),
+        false_positive_rate=float(fp / (fp + tn)),
+        threshold=threshold,
+        train_size=len(train_idx),
+        test_size=len(test_idx),
+        true_negatives=int(tn),
+        false_positives=int(fp),
+        false_negatives=int(fn),
+        true_positives=int(tp),
+    )
+    return ProbeArtifact(
+        probeId=probe_id,
+        version=version,
+        modelVersion=embedder.model_version,
+        inputFormat=INPUT_FORMAT,
+        weights=weights.tolist(),
+        bias=float(bias),
+        metrics=metrics,
+        datasetSha256=digest,
+        seed=seed,
+    )
 
 
 def main():

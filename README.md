@@ -175,3 +175,9 @@ This runs two scenarios on the same machine, creates a new JWT per run, captures
 - All workflows and infrastructure are implementation candidates until validated in CI. No fabricated results or production-readiness claims.
 
 See [ADRs](docs/adr/) for the reasoning behind architectural choices.
+
+## Dependency maintenance
+
+Use Node 22 and pnpm 10.12.4. Run `pnpm install --frozen-lockfile` for normal installs. After intentionally changing package manifests, run `pnpm install --no-frozen-lockfile` and commit the updated lockfile.
+
+The Python lock targets Linux x86-64, Python 3.12 and CPU PyTorch. To regenerate it in a fresh virtual environment, install `torch==2.10.0` from `https://download.pytorch.org/whl/cpu`, install `apps/inference-service/requirements.txt`, and run `pip freeze > apps/inference-service/requirements.lock.txt`. For normal installs, install CPU torch first and then the lockfile. Run `pip check` after installation. This is a version lock, not a hash-verified lock or a cross-platform guarantee.

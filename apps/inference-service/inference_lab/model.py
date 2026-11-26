@@ -1,4 +1,5 @@
 """A single forward hook; no autoregressive generation or vocabulary logits."""
+
 import os
 from pathlib import Path
 from typing import Protocol
@@ -15,6 +16,7 @@ class InputTooLong(ValueError):
 class Embedder(Protocol):
     model_version: str
     dimension: int
+
     def embed(self, text: str) -> torch.Tensor: ...
 
 
@@ -35,8 +37,9 @@ class HookedEmbedder:
 
     @torch.inference_mode()
     def embed(self, text: str) -> torch.Tensor:
-        encoded = self.tokenizer(text, return_tensors="pt", truncation=False,
-                                 add_special_tokens=False, verbose=False)
+        encoded = self.tokenizer(
+            text, return_tensors="pt", truncation=False, add_special_tokens=False, verbose=False
+        )
         if encoded["input_ids"].shape[1] not in range(1, self.max_tokens + 1):
             raise InputTooLong("input exceeds token limit or is empty")
         self._activation = None
@@ -58,16 +61,41 @@ def load_embedder() -> HookedEmbedder:
     # Lazy imports let offline tests exercise the real hook and probe math without downloading weights.
     from huggingface_hub import snapshot_download
     from transformers import AutoModelForCausalLM, AutoTokenizer
+
     revision = os.getenv("MODEL_REVISION", "2290a62")
     layer = int(os.getenv("MODEL_LAYER", "3"))  # zero-based fourth transformer block
     max_tokens = int(os.getenv("MODEL_MAX_TOKENS", "256"))
     torch.set_num_threads(int(os.getenv("TORCH_NUM_THREADS", "2")))
-    snapshot = snapshot_download(MODEL_ID, revision=revision,
-        allow_patterns=["config.json", "model.safetensors", "tokenizer.json", "tokenizer_config.json", "vocab.json", "merges.txt", "special_tokens_map.json", "generation_config.json"],
-        local_files_only=os.getenv("HF_HUB_OFFLINE") == "1")
+    snapshot = snapshot_download(
+        MODEL_ID,
+        revision=revision,
+        allow_patterns=[
+            "config.json",
+            "model.safetensors",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json",
+            "merges.txt",
+            "special_tokens_map.json",
+            "generation_config.json",
+        ],
+        local_files_only=os.getenv("HF_HUB_OFFLINE") == "1",
+    )
     commit = Path(snapshot).name
-    tokenizer = AutoTokenizer.from_pretrained(snapshot, local_files_only=True, trust_remote_code=False)
-    lm = AutoModelForCausalLM.from_pretrained(snapshot, local_files_only=True,
-        trust_remote_code=False, use_safetensors=True).to("cpu").eval()
-    return HookedEmbedder(lm.transformer, tokenizer,
-        f"distilgpt2:{commit}:l{layer}:t{max_tokens}:tool-json-v1", layer, max_tokens)
+    tokenizer = AutoTokenizer.from_pretrained(
+        snapshot, local_files_only=True, trust_remote_code=False
+    )
+    lm = (
+        AutoModelForCausalLM.from_pretrained(
+            snapshot, local_files_only=True, trust_remote_code=False, use_safetensors=True
+        )
+        .to("cpu")
+        .eval()
+    )
+    return HookedEmbedder(
+        lm.transformer,
+        tokenizer,
+        f"distilgpt2:{commit}:l{layer}:t{max_tokens}:tool-json-v1",
+        layer,
+        max_tokens,
+    )

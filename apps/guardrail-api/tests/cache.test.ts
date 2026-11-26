@@ -1,11 +1,58 @@
-import { describe,expect,it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { MemoryPolicyStore } from '../src/infrastructure/memory-policy-store.js';
-import { bundle,policy } from './fixtures.js';
-describe('policy snapshots',()=>{
-  it('isolates same agent ID in different tenants',()=>{const store=new MemoryPolicyStore();store.replace(bundle());store.replace(bundle({...policy,tenantId:'tenant-b',policyId:'other'}));expect(store.lookup('tenant-a','agent-a','x').policy?.policy.policyId).toBe('p');expect(store.lookup('tenant-b','agent-a','x').policy?.policy.policyId).toBe('other');expect(store.lookup('tenant-c','agent-a','x').policy).toBeUndefined();});
-  it('rejects tenants outside a silo',()=>{const store=new MemoryPolicyStore(1000,Date.now,'tenant-a');expect(()=>store.replace(bundle({...policy,tenantId:'tenant-b'}))).toThrow();});
-  it('rejects rollback and retains prior snapshot on failed replacement',()=>{const store=new MemoryPolicyStore();store.replace(bundle());expect(()=>store.replace(bundle())).toThrow();const invalid=bundle({...policy,rules:[{id:'bad',type:'regex',targetPath:'arguments.note',pattern:'(',action:'block'}]},Date.now(),2);expect(()=>store.replace(invalid)).toThrow();expect(store.lookup('tenant-a','agent-a','x').policy?.policy.version).toBe(1);});
-  it('atomically activates a valid new snapshot',()=>{const store=new MemoryPolicyStore();store.replace(bundle());const previous=store.lookup('tenant-a','agent-a','x').policy;store.replace(bundle({...policy,version:2},Date.now(),2));expect(previous?.policy.version).toBe(1);expect(store.lookup('tenant-a','agent-a','x').policy?.policy.version).toBe(2);});
-  it('detects staleness using injected clock',()=>{let now=100000;const store=new MemoryPolicyStore(100,()=>now);store.replace(bundle(policy,now));expect(store.ready()).toBe(true);now+=100;expect(store.ready()).toBe(false);expect(store.lookup('tenant-a','agent-a','x').stale).toBe(true);});
-  it('tracks token and agent revocation',()=>{const store=new MemoryPolicyStore();store.replace({...bundle(),revokedTokenIds:['revoked'],revokedAgentIds:['other']});expect(store.lookup('tenant-a','agent-a','revoked').revoked).toBe(true);expect(store.lookup('tenant-a','other','valid').revoked).toBe(true);expect(store.lookup('tenant-a','agent-a','valid').revoked).toBe(false);});
+import { bundle, policy } from './fixtures.js';
+describe('policy snapshots', () => {
+  it('isolates same agent ID in different tenants', () => {
+    const store = new MemoryPolicyStore();
+    store.replace(bundle());
+    store.replace(bundle({ ...policy, tenantId: 'tenant-b', policyId: 'other' }));
+    expect(store.lookup('tenant-a', 'agent-a', 'x').policy?.policy.policyId).toBe('p');
+    expect(store.lookup('tenant-b', 'agent-a', 'x').policy?.policy.policyId).toBe('other');
+    expect(store.lookup('tenant-c', 'agent-a', 'x').policy).toBeUndefined();
+  });
+  it('rejects tenants outside a silo', () => {
+    const store = new MemoryPolicyStore(1000, Date.now, 'tenant-a');
+    expect(() => store.replace(bundle({ ...policy, tenantId: 'tenant-b' }))).toThrow();
+  });
+  it('rejects rollback and retains prior snapshot on failed replacement', () => {
+    const store = new MemoryPolicyStore();
+    store.replace(bundle());
+    expect(() => store.replace(bundle())).toThrow();
+    const invalid = bundle(
+      {
+        ...policy,
+        rules: [
+          { id: 'bad', type: 'regex', targetPath: 'arguments.note', pattern: '(', action: 'block' },
+        ],
+      },
+      Date.now(),
+      2,
+    );
+    expect(() => store.replace(invalid)).toThrow();
+    expect(store.lookup('tenant-a', 'agent-a', 'x').policy?.policy.version).toBe(1);
+  });
+  it('atomically activates a valid new snapshot', () => {
+    const store = new MemoryPolicyStore();
+    store.replace(bundle());
+    const previous = store.lookup('tenant-a', 'agent-a', 'x').policy;
+    store.replace(bundle({ ...policy, version: 2 }, Date.now(), 2));
+    expect(previous?.policy.version).toBe(1);
+    expect(store.lookup('tenant-a', 'agent-a', 'x').policy?.policy.version).toBe(2);
+  });
+  it('detects staleness using injected clock', () => {
+    let now = 100000;
+    const store = new MemoryPolicyStore(100, () => now);
+    store.replace(bundle(policy, now));
+    expect(store.ready()).toBe(true);
+    now += 100;
+    expect(store.ready()).toBe(false);
+    expect(store.lookup('tenant-a', 'agent-a', 'x').stale).toBe(true);
+  });
+  it('tracks token and agent revocation', () => {
+    const store = new MemoryPolicyStore();
+    store.replace({ ...bundle(), revokedTokenIds: ['revoked'], revokedAgentIds: ['other'] });
+    expect(store.lookup('tenant-a', 'agent-a', 'revoked').revoked).toBe(true);
+    expect(store.lookup('tenant-a', 'other', 'valid').revoked).toBe(true);
+    expect(store.lookup('tenant-a', 'agent-a', 'valid').revoked).toBe(false);
+  });
 });
