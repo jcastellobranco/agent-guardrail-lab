@@ -5,6 +5,7 @@ import { CheckToolCall } from './application/check-tool-call.js';
 import type { PolicyStore, TokenVerifier, InferenceClient } from './application/ports.js';
 import { HttpError } from './domain/errors.js';
 import { PromMetrics } from './infrastructure/metrics.js';
+import { executeTool, type ToolHandler } from './application/execute-tool.js';
 export function buildApp(deps: {
   auth: TokenVerifier;
   store: PolicyStore;
@@ -13,6 +14,7 @@ export function buildApp(deps: {
   logger?: boolean;
   inference?: InferenceClient;
   headroomMs?: number;
+  tools?: ReadonlyMap<string, ToolHandler>;
   audit?: { offer(event: AuditEvent): void };
 }) {
   const app = Fastify({
@@ -67,6 +69,20 @@ export function buildApp(deps: {
         : undefined,
     );
     return reply.code(200).send(decision);
+  });
+  app.post('/v1/execute', async (request, reply) => {
+    const authorization = request.headers.authorization;
+    if (!authorization?.startsWith('Bearer ') || !authorization.slice(7))
+      throw new HttpError(401, 'TOKEN_REQUIRED');
+    const result = await executeTool(
+      request.body,
+      (body) =>
+        check.execute(authorization.slice(7), body, starts.get(request), (event) => {
+          pending.set(request, event);
+        }),
+      deps.tools ?? new Map(),
+    );
+    return reply.code(result.executed ? 200 : 403).send(result);
   });
   app.get('/health/live', async () => ({ status: 'ok' }));
   app.get('/health/ready', async (_req, reply) => {
