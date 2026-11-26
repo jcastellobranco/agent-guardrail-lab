@@ -45,7 +45,11 @@ class ProbeBank:
         if len(self.indices) != len(artifacts):
             raise ValueError("duplicate probe version")
         for p in artifacts:
-            if p.modelVersion != embedder.model_version or p.inputFormat != INPUT_FORMAT or len(p.weights) != embedder.dimension:
+            if (
+                p.modelVersion != embedder.model_version
+                or p.inputFormat != INPUT_FORMAT
+                or len(p.weights) != embedder.dimension
+            ):
                 raise ValueError("probe incompatible with model, input format or dimension")
         self.weights = torch.tensor([p.weights for p in artifacts], dtype=torch.float32)
         self.biases = torch.tensor([p.bias for p in artifacts], dtype=torch.float32)

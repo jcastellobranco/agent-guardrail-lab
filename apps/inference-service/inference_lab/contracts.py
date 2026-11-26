@@ -3,7 +3,10 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_vali
 
 Id = Annotated[str, StringConstraints(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$")]
 Segment = Annotated[str, StringConstraints(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$")]
-ProbeKey = Annotated[str, StringConstraints(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$")]
+ProbeKey = Annotated[
+    str,
+    StringConstraints(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$"),
+]
 Probability = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 
 
