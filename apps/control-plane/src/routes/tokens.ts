@@ -10,17 +10,19 @@ import type { Config } from '../config.js';
 
 const params = z.object({ tenantId: Id, agentId: Id });
 
-export function registerTokensRoutes(admin: FastifyInstance, db: ControlDatabase, c: Config, jwtKey: Awaited<ReturnType<typeof importPKCS8>>) {
+export function registerTokensRoutes(
+  admin: FastifyInstance,
+  db: ControlDatabase,
+  c: Config,
+  jwtKey: Awaited<ReturnType<typeof importPKCS8>>,
+) {
   admin.post('/tenants/:tenantId/agents/:agentId/token', async (req, reply) => {
     const p = params.parse(req.params);
     const [a] = await db
       .select({ id: agents.id })
       .from(agents)
       .innerJoin(tenants, eq(tenants.id, agents.tenantId))
-      .innerJoin(
-        policies,
-        and(eq(policies.tenantId, agents.tenantId), eq(policies.agentId, agents.id)),
-      )
+      .innerJoin(policies, and(eq(policies.tenantId, agents.tenantId), eq(policies.agentId, agents.id)))
       .where(
         and(
           eq(agents.tenantId, p.tenantId),

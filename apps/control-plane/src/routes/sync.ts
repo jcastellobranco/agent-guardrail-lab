@@ -7,7 +7,6 @@ import { signBundle } from '@lab/bundles';
 import { tenants, agents, policies, revocations, telemetry } from '@lab/database';
 import type { Config } from '../config.js';
 
-
 export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c: Config) {
   sync.get('/:tenantId/bundle', async (req, reply) => {
     const tenantId = Id.parse((req.params as { tenantId: string }).tenantId);
@@ -25,9 +24,7 @@ export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c
           rs = await tx
             .select()
             .from(revocations)
-            .where(
-              and(eq(revocations.tenantId, tenantId), gt(revocations.expiresAt, new Date())),
-            );
+            .where(and(eq(revocations.tenantId, tenantId), gt(revocations.expiresAt, new Date())));
         const active = new Set(as.filter((a) => a.active && tenant.active).map((a) => a.id));
         const parsed = ps
           .filter((p) => p.active && active.has(p.agentId))
@@ -61,10 +58,7 @@ export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c
     const rows = await db
       .select({ body: policies.body })
       .from(policies)
-      .innerJoin(
-        agents,
-        and(eq(agents.tenantId, policies.tenantId), eq(agents.id, policies.agentId)),
-      )
+      .innerJoin(agents, and(eq(agents.tenantId, policies.tenantId), eq(agents.id, policies.agentId)))
       .innerJoin(tenants, eq(tenants.id, policies.tenantId))
       .where(
         and(
@@ -89,10 +83,7 @@ export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c
   sync.post('/:tenantId/telemetry', async (req, reply) => {
     const tenantId = Id.parse((req.params as { tenantId: string }).tenantId),
       b = TelemetryWindowSchema.parse(req.body);
-    if (
-      b.tenantId !== tenantId ||
-      Date.parse(b.windowEnd) - Date.parse(b.windowStart) !== 60000
-    )
+    if (b.tenantId !== tenantId || Date.parse(b.windowEnd) - Date.parse(b.windowStart) !== 60000)
       return reply.code(400).send({ error: 'SCOPE_OR_WINDOW' });
     await db
       .insert(telemetry)
