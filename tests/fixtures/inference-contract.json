@@ -1,0 +1,17 @@
+{
+  "requests": [
+    {"valid":true,"value":{"text":"ordinary request","probeIds":["jailbreak:1.0.0"]}},
+    {"valid":false,"value":{"text":"","probeIds":["jailbreak:1.0.0"]}},
+    {"valid":false,"value":{"text":"hello","probeIds":["jailbreak"]}},
+    {"valid":false,"value":{"text":"hello","probeIds":["jailbreak:1.0.0","jailbreak:1.0.0"]}},
+    {"valid":false,"value":{"text":"hello","probeIds":["jailbreak:1.0.0"],"tenantId":"t"}}
+  ],
+  "responses": [
+    {"valid":true,"value":{"scores":{"jailbreak:1.0.0":0.6},"modelVersion":"fixture:v1","latencyMs":2.5}},
+    {"valid":false,"value":{"scores":{},"modelVersion":"fixture:v1","latencyMs":2.5}},
+    {"valid":false,"value":{"scores":{"jailbreak:1.0.0":1.5},"modelVersion":"fixture:v1","latencyMs":2.5}},
+    {"valid":false,"value":{"scores":{"jailbreak:1.0.0":"0.5"},"modelVersion":"fixture:v1","latencyMs":2.5}},
+    {"valid":false,"value":{"scores":{"jailbreak:1.0.0":0.5},"modelVersion":"fixture:v1","latencyMs":-1}},
+    {"valid":false,"value":{"scores":{"jailbreak:1.0.0":0.5},"modelVersion":"fixture:v1","latencyMs":2.5,"prompt":"secret"}}
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@lab/bundles",
+  "version": "0.6.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "lint": "eslint src tests",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@lab/contracts": "workspace:*"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "drizzle",
+    "sql"
+  ]
+}

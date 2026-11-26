@@ -1,0 +1,28 @@
+{
+  "name": "agent-guardrail-lab",
+  "private": true,
+  "version": "0.6.0",
+  "packageManager": "pnpm@10.12.4",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "dev": "pnpm --filter @lab/guardrail-api... build && pnpm --filter @lab/guardrail-api dev",
+    "demo": "pnpm --filter @lab/guardrail-api demo",
+    "keys": "pnpm --filter @lab/guardrail-api keys",
+    "demo:probes": "pnpm --filter @lab/guardrail-api demo:probes"
+  },
+  "devDependencies": {
+    "turbo": "2.5.4",
+    "typescript": "5.8.3",
+    "@types/node": "22.15.30",
+    "vitest": "3.2.4",
+    "eslint": "9.28.0",
+    "typescript-eslint": "8.34.0",
+    "@eslint/js": "9.28.0"
+  }
+}

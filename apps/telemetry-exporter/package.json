@@ -1,0 +1,21 @@
+{
+  "name": "@lab/telemetry-exporter",
+  "version": "0.6.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@lab/local-audit": "workspace:*",
+    "@lab/contracts": "workspace:*"
+  },
+  "files": [
+    "dist",
+    "scripts"
+  ]
+}

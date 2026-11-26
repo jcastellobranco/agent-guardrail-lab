@@ -1,0 +1,11 @@
+.git
+**/node_modules
+**/dist
+**/.turbo
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.dev-keys
+**/.env
+**/artifacts
+**/coverage

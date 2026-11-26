@@ -1,0 +1,1 @@
+"""Local activation-probe service."""

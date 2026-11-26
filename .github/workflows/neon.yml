@@ -1,0 +1,56 @@
+name: Neon PR branch
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+permissions:
+  contents: read
+concurrency:
+  group: neon-pr-${{ github.event.number }}
+  cancel-in-progress: false
+jobs:
+  database:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ secrets.NEON_PROJECT_ID }}
+    steps:
+      - name: Check configuration
+        id: config
+        run: |
+          if [[ -n "$NEON_API_KEY" && -n "$NEON_PROJECT_ID" ]]; then echo 'enabled=true' >> "$GITHUB_OUTPUT"; else echo 'enabled=false' >> "$GITHUB_OUTPUT"; echo 'Neon secrets missing; skipping.'; fi
+      - name: Delete PR branch
+        if: steps.config.outputs.enabled == 'true' && github.event.action == 'closed'
+        uses: neondatabase/delete-branch-by-name-action@main
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch_name: lab-pr-${{ github.event.number }}
+      - name: Set expiration
+        if: steps.config.outputs.enabled == 'true' && github.event.action != 'closed'
+        run: echo "NEON_EXPIRES=$(date -u --date '+14 days' +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_ENV"
+      - name: Create or reuse isolated branch
+        id: branch
+        if: steps.config.outputs.enabled == 'true' && github.event.action != 'closed'
+        uses: neondatabase/create-branch-action@v6
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch_name: lab-pr-${{ github.event.number }}
+          branch_type: schema-only
+          expires_at: ${{ env.NEON_EXPIRES }}
+      - uses: actions/checkout@v4
+        if: steps.branch.outcome == 'success'
+      - uses: actions/setup-node@v4
+        if: steps.branch.outcome == 'success'
+        with: {node-version: '22'}
+      - if: steps.branch.outcome == 'success'
+        env:
+          DATABASE_URL: ${{ steps.branch.outputs.db_url }}
+          TEST_DATABASE_URL: ${{ steps.branch.outputs.db_url }}
+          NEON_API_KEY: ''
+        run: |
+          corepack enable && corepack prepare pnpm@10.12.4 --activate
+          pnpm install --no-frozen-lockfile
+          pnpm --filter @lab/control-plane... build
+          pnpm --filter @lab/database exec node scripts/neon-ci.mjs

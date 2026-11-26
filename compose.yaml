@@ -1,0 +1,131 @@
+x-sync-env: &sync-env
+  CONTROL_PLANE_URL: http://control-plane:8002
+  SILO_TENANT: tenant-a
+  SYNC_TOKEN: local-only-sync-change-me-12345
+  ALLOW_INSECURE_LOCAL_HTTP: "1"
+x-audit-env: &audit-env
+  LOCAL_AUDIT_DATABASE_URL: postgresql://lab:lab@local-db:5432/audit
+services:
+  control-db:
+    image: postgres:17-alpine
+    environment: {POSTGRES_USER: lab, POSTGRES_PASSWORD: lab, POSTGRES_DB: control}
+    volumes: [control-data:/var/lib/postgresql/data]
+    networks: [control-net]
+    healthcheck: {test: [CMD-SHELL, "pg_isready -U lab -d control"], interval: 2s, timeout: 3s, retries: 30}
+  local-db:
+    image: postgres:17-alpine
+    environment: {POSTGRES_USER: lab, POSTGRES_PASSWORD: lab, POSTGRES_DB: audit}
+    volumes:
+      - audit-data:/var/lib/postgresql/data
+      - ./packages/local-audit/sql/001_queue.sql:/docker-entrypoint-initdb.d/001_queue.sql:ro
+    networks: [data-net]
+    healthcheck: {test: [CMD-SHELL, "pg_isready -U lab -d audit"], interval: 2s, timeout: 3s, retries: 30}
+  keys:
+    image: node:22-bookworm-slim
+    command: [node, /scripts/compose-keys.mjs]
+    volumes:
+      - ./scripts:/scripts:ro
+      - private-keys:/keys-private
+      - public-keys:/keys-public
+      - signed-cache:/cache
+    network_mode: none
+  migrate:
+    build: {context: ., dockerfile: apps/control-plane/Dockerfile}
+    command: [node, node_modules/@lab/database/dist/migrate.js]
+    environment: {DATABASE_URL: "postgresql://lab:lab@control-db:5432/control"}
+    networks: [control-net]
+    depends_on: {control-db: {condition: service_healthy}}
+  control-plane:
+    build: {context: ., dockerfile: apps/control-plane/Dockerfile}
+    ports: ["127.0.0.1:8002:8002"]
+    environment:
+      DATABASE_URL: postgresql://lab:lab@control-db:5432/control
+      ADMIN_TOKEN: local-only-admin-change-me-1234
+      SYNC_TOKENS_JSON: '{"tenant-a":"local-only-sync-change-me-12345"}'
+      JWT_PRIVATE_KEY_PATH: /keys-private/jwt.pem
+      BUNDLE_PRIVATE_KEY_PATH: /keys-private/bundle.pem
+    volumes: [private-keys:/keys-private:ro]
+    networks: [control-net, sync-net]
+    depends_on: {migrate: {condition: service_completed_successfully}, keys: {condition: service_completed_successfully}}
+    healthcheck: {test: [CMD, node, -e, "fetch('http://127.0.0.1:8002/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], interval: 2s, timeout: 3s, retries: 30}
+  seed:
+    image: node:22-bookworm-slim
+    command: [node, /scripts/compose-demo.mjs, seed]
+    environment:
+      CONTROL_PLANE_URL: http://control-plane:8002
+      PROBES_ENABLED: ${PROBES_ENABLED:-0}
+      POLICY_LATENCY_BUDGET_MS: ${POLICY_LATENCY_BUDGET_MS:-50}
+      PROBE_FAIL_MODE: ${PROBE_FAIL_MODE:-closed}
+    volumes: [./scripts:/scripts:ro]
+    networks: [sync-net]
+    depends_on: {control-plane: {condition: service_healthy}}
+  sync-agent:
+    build: {context: ., dockerfile: apps/sync-agent/Dockerfile}
+    environment:
+      <<: *sync-env
+      BUNDLE_PUBLIC_KEY_PATH: /keys-public/bundle.pem
+      SIGNED_BUNDLE_PATH: /cache/bundle.json
+      SYNC_INTERVAL_MS: ${SYNC_INTERVAL_MS:-5000}
+    volumes: [public-keys:/keys-public:ro, signed-cache:/cache]
+    networks: [sync-net]
+    depends_on: {seed: {condition: service_completed_successfully}}
+  guardrail-api:
+    build: {context: ., dockerfile: apps/guardrail-api/Dockerfile}
+    ports: ["127.0.0.1:8000:8000"]
+    environment:
+      <<: *audit-env
+      HOST: 0.0.0.0
+      JWT_PUBLIC_KEY_PATH: /keys-public/jwt.pem
+      BUNDLE_PUBLIC_KEY_PATH: /keys-public/bundle.pem
+      SIGNED_BUNDLE_PATH: /cache/bundle.json
+      SILO_TENANT: tenant-a
+      MAX_POLICY_AGE_MS: ${MAX_POLICY_AGE_MS:-300000}
+      LATENCY_BUDGET_MS: ${LATENCY_BUDGET_MS:-50}
+      INFERENCE_URL: ${INFERENCE_URL:-http://inference-service:8001}
+    volumes: [public-keys:/keys-public:ro, signed-cache:/cache:ro]
+    networks: [data-net]
+    depends_on: {keys: {condition: service_completed_successfully}, local-db: {condition: service_healthy}, sync-agent: {condition: service_started}}
+    healthcheck: {test: [CMD, node, -e, "fetch('http://127.0.0.1:8000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], interval: 2s, timeout: 3s, retries: 30}
+  audit-worker:
+    build: {context: ., dockerfile: apps/audit-worker/Dockerfile}
+    environment: *audit-env
+    networks: [data-net]
+    depends_on: {local-db: {condition: service_healthy}}
+  telemetry-exporter:
+    build: {context: ., dockerfile: apps/telemetry-exporter/Dockerfile}
+    environment:
+      <<: [*sync-env, *audit-env]
+      DEPLOYMENT_ID: local-demo
+    networks: [data-net, sync-net]
+    depends_on: {local-db: {condition: service_healthy}, seed: {condition: service_completed_successfully}}
+  train-probe:
+    profiles: [probes]
+    build: {context: ., dockerfile: apps/inference-service/Dockerfile}
+    command: [sh, -c, 'test -f /artifacts/jailbreak-1.0.0.json || python -m inference_lab.train --out /artifacts']
+    volumes: [model-cache:/model-cache, probes:/artifacts]
+  inference-service:
+    profiles: [probes]
+    build: {context: ., dockerfile: apps/inference-service/Dockerfile}
+    volumes: [model-cache:/model-cache, probes:/artifacts:ro]
+    environment: {HF_HUB_OFFLINE: "1"}
+    networks: [data-net]
+    depends_on: {train-probe: {condition: service_completed_successfully}}
+    healthcheck: {test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health/ready')"], interval: 5s, timeout: 3s, retries: 60}
+  inference-mock:
+    profiles: [test]
+    image: node:22-bookworm-slim
+    command: [node, /scripts/inference-mock.mjs]
+    volumes: [./tests/integration:/scripts:ro]
+    networks: [data-net]
+networks:
+  control-net: {}
+  sync-net: {}
+  data-net: {}
+volumes:
+  control-data: {}
+  audit-data: {}
+  private-keys: {}
+  public-keys: {}
+  signed-cache: {}
+  model-cache: {}
+  probes: {}

@@ -1,0 +1,3 @@
+# ADR 0010 — Local PostgreSQL queue
+
+Use a separate customer-side Postgres database. Bounded RAM handoff after HTTP response, then INSERT with decision UUID. Workers acquire rows using FOR UPDATE SKIP LOCKED; idempotent record insertion and acknowledgement share a transaction. Failure rolls back to a savepoint and reschedules, or moves the row into a DLQ. Polling is the durable path. SQS would reduce database maintenance but require another dependency and at-least-once consumer design. A process crash or database outage before enqueue can lose traces; monitor audit_dropped_total. An optional LISTEN/NOTIFY optimization would require a direct session connection, not transaction-mode pooling; periodic reconciliation remains necessary.

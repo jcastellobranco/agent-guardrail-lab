@@ -1,0 +1,27 @@
+tenantId: tenant-a
+deploymentId: lab-silo
+controlPlaneUrl: https://control.example.com
+latencyBudgetMs: 50
+maxPolicyAgeMs: 300000
+syncIntervalMs: 30000
+imageRepository: ghcr.io/jcastellobranco/agent-guardrail-lab
+imageTag: v0.6.0
+existingSecret: guardrail-data-plane
+cacheStorage: 1Gi
+storageClassName: ""
+# Secret keys: jwt.pem, bundle.pem, sync-token, local-audit-database-url
+# Optional probe service uses a pre-populated read-only artifact PVC; model cache must be prepared externally.
+inference:
+  enabled: false
+  modelRevision: "2290a62"
+  modelLayer: "3"
+  maxTokens: "256"
+  probeVersion: "1.0.0"
+  artifactClaim: guardrail-probes
+  modelCacheClaim: guardrail-model-cache
+  resources:
+    requests: {cpu: "1", memory: 1Gi}
+    limits: {cpu: "2", memory: 2Gi}
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: "1", memory: 512Mi}

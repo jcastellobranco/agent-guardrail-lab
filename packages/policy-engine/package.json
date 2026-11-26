@@ -1,0 +1,27 @@
+{
+  "name": "@lab/policy-engine",
+  "version": "0.6.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "lint": "eslint src tests"
+  },
+  "dependencies": {
+    "@lab/contracts": "workspace:*",
+    "re2js": "2.9.1"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "drizzle",
+    "sql"
+  ]
+}

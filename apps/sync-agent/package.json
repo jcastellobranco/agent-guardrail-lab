@@ -1,0 +1,22 @@
+{
+  "name": "@lab/sync-agent",
+  "version": "0.6.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "lint": "eslint src tests",
+    "test": "vitest run --passWithNoTests",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@lab/contracts": "workspace:*",
+    "@lab/bundles": "workspace:*",
+    "@lab/policy-engine": "workspace:*"
+  },
+  "files": [
+    "dist",
+    "scripts"
+  ]
+}

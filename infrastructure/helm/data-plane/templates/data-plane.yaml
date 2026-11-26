@@ -1,0 +1,121 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "lab.name" . }}-cache
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if .Values.storageClassName }}
+  storageClassName: {{ .Values.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests: {storage: {{ .Values.cacheStorage | quote }}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lab.name" . }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: {{ include "lab.name" . }}}
+  template:
+    metadata:
+      labels: {app: {{ include "lab.name" . }}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {fsGroup: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: guardrail
+          image: {{ .Values.imageRepository }}-guardrail-api:{{ .Values.imageTag }}
+          securityContext:
+            {{- include "lab.security" . | nindent 12 }}
+          ports: [{name: http, containerPort: 8000}]
+          env:
+            - {name: HOST, value: "0.0.0.0"}
+            - {name: SILO_TENANT, value: {{ .Values.tenantId | quote }}}
+            - {name: JWT_PUBLIC_KEY_PATH, value: /keys/jwt.pem}
+            - {name: BUNDLE_PUBLIC_KEY_PATH, value: /keys/bundle.pem}
+            - {name: SIGNED_BUNDLE_PATH, value: /cache/bundle.json}
+            - {name: LATENCY_BUDGET_MS, value: {{ .Values.latencyBudgetMs | quote }}}
+            - {name: MAX_POLICY_AGE_MS, value: {{ .Values.maxPolicyAgeMs | quote }}}
+            - {name: INFERENCE_URL, value: "http://127.0.0.1:8001"}
+            {{- include "lab.auditEnv" . | nindent 12 }}
+          volumeMounts:
+            - {name: cache, mountPath: /cache, readOnly: true}
+            - {name: keys, mountPath: /keys, readOnly: true}
+          readinessProbe: {httpGet: {path: /health/serving, port: http}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /health/live, port: http}, periodSeconds: 10}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+        - name: sync-agent
+          image: {{ .Values.imageRepository }}-sync-agent:{{ .Values.imageTag }}
+          securityContext:
+            {{- include "lab.security" . | nindent 12 }}
+          env:
+            {{- include "lab.syncEnv" . | nindent 12 }}
+            - {name: BUNDLE_PUBLIC_KEY_PATH, value: /keys/bundle.pem}
+            - {name: SIGNED_BUNDLE_PATH, value: /cache/bundle.json}
+            - {name: SYNC_INTERVAL_MS, value: {{ .Values.syncIntervalMs | quote }}}
+          volumeMounts:
+            - {name: cache, mountPath: /cache}
+            - {name: keys, mountPath: /keys, readOnly: true}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+        - name: audit-worker
+          image: {{ .Values.imageRepository }}-audit-worker:{{ .Values.imageTag }}
+          securityContext:
+            {{- include "lab.security" . | nindent 12 }}
+          env:
+            {{- include "lab.auditEnv" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+        - name: telemetry-exporter
+          image: {{ .Values.imageRepository }}-telemetry-exporter:{{ .Values.imageTag }}
+          securityContext:
+            {{- include "lab.security" . | nindent 12 }}
+          env:
+            {{- include "lab.syncEnv" . | nindent 12 }}
+            {{- include "lab.auditEnv" . | nindent 12 }}
+            - {name: DEPLOYMENT_ID, value: {{ .Values.deploymentId | quote }}}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+        {{- if .Values.inference.enabled }}
+        - name: inference
+          image: {{ .Values.imageRepository }}-inference-service:{{ .Values.imageTag }}
+          securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          env:
+            - {name: HF_HUB_OFFLINE, value: "1"}
+            - {name: MODEL_REVISION, value: {{ .Values.inference.modelRevision | quote }}}
+            - {name: MODEL_LAYER, value: {{ .Values.inference.modelLayer | quote }}}
+            - {name: MODEL_MAX_TOKENS, value: {{ .Values.inference.maxTokens | quote }}}
+            - {name: EXPECTED_PROBE_VERSION, value: {{ .Values.inference.probeVersion | quote }}}
+          volumeMounts:
+            - {name: probes, mountPath: /artifacts, readOnly: true}
+            - {name: model-cache, mountPath: /model-cache, readOnly: true}
+          startupProbe: {httpGet: {path: /health/ready, port: 8001}, failureThreshold: 60, periodSeconds: 5}
+          resources:
+            {{- toYaml .Values.inference.resources | nindent 12 }}
+        {{- end }}
+      volumes:
+        - name: cache
+          persistentVolumeClaim: {claimName: {{ include "lab.name" . }}-cache}
+        - name: keys
+          secret:
+            secretName: {{ .Values.existingSecret | quote }}
+            items: [{key: jwt.pem, path: jwt.pem}, {key: bundle.pem, path: bundle.pem}]
+        {{- if .Values.inference.enabled }}
+        - name: probes
+          persistentVolumeClaim: {claimName: {{ .Values.inference.artifactClaim | quote }}}
+        - name: model-cache
+          persistentVolumeClaim: {claimName: {{ .Values.inference.modelCacheClaim | quote }}}
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "lab.name" . }}
+spec:
+  selector: {app: {{ include "lab.name" . }}}
+  ports: [{name: http, port: 8000, targetPort: http}]
+  type: ClusterIP

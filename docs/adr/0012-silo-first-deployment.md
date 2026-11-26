@@ -1,0 +1,3 @@
+# ADR 0012 — Silo-first deployment
+
+Compose uses separate networks and Postgres databases for the two planes. Helm deploys one data-plane pod per tenant with pull-only sync, durable cache, public key secret and optional inference sidecar. A single replica avoids shared cache writer races. Pool mode requires per-tenant quotas, tenant-aware worker scheduling, RLS with a non-owner application role, and robust cache replication; it is not claimed as a supported deployment. Images are built per service and signed by digest on semantic release tags. The chart requires pre-provisioned local Postgres and model artifact volumes.

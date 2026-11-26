@@ -1,0 +1,3 @@
+# ADR 0011 — Aggregate-only telemetry
+
+The exporter selects only observation fields from local audit records and explicitly projects counts, score histograms, percentiles, observed version identifiers and cache age into strict contracts. Raw prompts, arguments, agent IDs and decision IDs never go over the control-plane link. Windows use worker processing time, a grace interval, and persistent export cursor; the ingest primary key deduplicates retries. Late records, oversized windows, lost pre-enqueue events and small sample re-identification are limitations. Production should aggregate in SQL or streaming bounded sketches, apply retention and minimum-count thresholds, and enforce separate database roles.

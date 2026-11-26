@@ -1,0 +1,4 @@
+import type { AgentPolicy, PolicyBundle } from '@lab/contracts';
+export const policy:AgentPolicy={schemaVersion:1,policyId:'p',version:1,tenantId:'tenant-a',agentId:'agent-a',defaultAction:'block',tools:{allowlist:['transfer'],denylist:['delete']},rules:[{id:'limit',type:'numeric_limit',tool:'transfer',argumentPath:'amount',operator:'gt',value:100,action:'block'}],probes:{enabled:false,configurations:[]},latencyBudgetMs:500,failMode:'closed'};
+export const bundle=(p=policy,now=Date.now(),version=1):PolicyBundle=>({schemaVersion:1,bundleId:'bundle',tenantId:p.tenantId,version,issuedAt:new Date(now-1).toISOString(),expiresAt:new Date(now+60000).toISOString(),policies:[p],revokedTokenIds:[],revokedAgentIds:[],probeVersions:{}});
+export const call={agentId:'agent-a',tool:'transfer',arguments:{amount:5}};

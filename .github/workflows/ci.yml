@@ -1,0 +1,66 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  typescript:
+    runs-on: ubuntu-latest # To use Blacksmith, replace with your configured Blacksmith runner label.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: corepack enable && corepack prepare pnpm@10.12.4 --activate
+      - run: pnpm install --no-frozen-lockfile # switch to --frozen-lockfile after committing the first generated lockfile
+      - run: pnpm lint && pnpm typecheck && pnpm test && pnpm build
+  inference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu && pip install -r apps/inference-service/requirements.txt
+      - run: cd apps/inference-service && python -m pytest -q
+      - name: Evaluate candidate probe
+        run: cd apps/inference-service && python -m inference_lab.train --out /tmp/candidate
+      - name: Evaluate current main for comparison (PRs)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git worktree add --detach /tmp/baseline "$BASE_SHA"
+          if test -f /tmp/baseline/apps/inference-service/inference_lab/train.py; then
+            cd /tmp/baseline/apps/inference-service
+            python -m inference_lab.train --out /tmp/baseline-artifact
+          fi
+      - name: FPR regression gate
+        run: python scripts/probe-gate.py /tmp/candidate/jailbreak-1.0.0.json --baseline /tmp/baseline-artifact/jailbreak-1.0.0.json --max-increase 0.05 --max-fpr 0.6
+      - uses: actions/upload-artifact@v4
+        with: {name: probe-evaluation, path: /tmp/candidate/*.json}
+  images:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [guardrail-api, inference-service, control-plane, sync-agent, audit-worker, telemetry-exporter]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f apps/${{ matrix.service }}/Dockerfile -t lab-${{ matrix.service }}:ci .
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - run: bash tests/integration/run.sh
+      - if: failure()
+        run: docker compose logs --tail=100 || true
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint infrastructure/helm/data-plane && helm template lab infrastructure/helm/data-plane >/dev/null && helm template lab infrastructure/helm/data-plane --set inference.enabled=true >/dev/null

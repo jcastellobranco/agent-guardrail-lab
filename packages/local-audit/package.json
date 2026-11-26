@@ -1,0 +1,31 @@
+{
+  "name": "@lab/local-audit",
+  "version": "0.6.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json",
+    "lint": "eslint src tests",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@lab/contracts": "workspace:*",
+    "pg": "8.16.0",
+    "zod": "3.25.76"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "devDependencies": {
+    "@types/pg": "8.15.4"
+  },
+  "files": [
+    "dist",
+    "drizzle",
+    "sql"
+  ]
+}
