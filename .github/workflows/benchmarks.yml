@@ -1,0 +1,46 @@
+name: Runtime benchmarks
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tests/load/**'
+      - '.github/workflows/benchmarks.yml'
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      COMPOSE_PROJECT_NAME: guardrail-benchmark
+      LATENCY_BUDGET_MS: '50'
+      BENCHMARK_BUDGET_MS: '50'
+      SYNC_INTERVAL_MS: '2000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - uses: grafana/setup-k6-action@v1
+        with:
+          k6-version: '1.0.0'
+      - name: Start real model and guardrail
+        run: |
+          docker compose --profile probes up -d --build
+          docker compose --profile probes up -d --wait --wait-timeout 600 guardrail-api inference-service
+      - name: Measure single and concurrent callers
+        run: |
+          VUS=1 DURATION=30s BENCHMARK_OUTPUT=benchmarks/results/vus-1 node tests/load/benchmark.mjs
+          VUS=5 DURATION=30s BENCHMARK_OUTPUT=benchmarks/results/vus-5 node tests/load/benchmark.mjs
+      - name: Upload raw measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-benchmarks
+          path: benchmarks/results/
+      - name: Diagnostics
+        if: failure()
+        run: docker compose --profile probes logs --tail=100
+      - name: Cleanup
+        if: always()
+        run: docker compose --profile probes down -v
