@@ -1,5 +1,7 @@
 # agent-guardrail-lab
 
+[![CI](https://github.com/jcastellobranco/agent-guardrail-lab/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jcastellobranco/agent-guardrail-lab/actions/workflows/ci.yml)
+
 A learning and portfolio project for latency-sensitive, tenant-aware runtime enforcement of AI agent tool calls. A local guardrail evaluates deterministic restrictions and optional activation probes before returning allow, flag or block. Centralized policy administration is separated from customer-side enforcement, auditing and model inference. This project is not an implementation or description of any real company's architecture.
 
 **Status: v0.6.0 source implementation.** Python offline tests executed; full Node dependencies, database integration, real-model evaluation, Docker/Helm and benchmarks still require an online development or CI environment. Do not use this lab as a production security boundary.
@@ -181,3 +183,7 @@ See [ADRs](docs/adr/) for the reasoning behind architectural choices.
 Use Node 22 and pnpm 10.12.4. Run `pnpm install --frozen-lockfile` for normal installs. After intentionally changing package manifests, run `pnpm install --no-frozen-lockfile` and commit the updated lockfile.
 
 The Python lock targets Linux x86-64, Python 3.12 and CPU PyTorch. To regenerate it in a fresh virtual environment, install `torch==2.10.0` from `https://download.pytorch.org/whl/cpu`, install `apps/inference-service/requirements.txt`, and run `pip freeze > apps/inference-service/requirements.lock.txt`. For normal installs, install CPU torch first and then the lockfile. Run `pip check` after installation. This is a version lock, not a hash-verified lock or a cross-platform guarantee.
+
+### PostgreSQL integration checks
+
+CI provisions an isolated PostgreSQL 17 service, builds the workspace dependencies, applies migrations twice to verify replay, and runs the Control Plane database suite directly (without Turbo caching). `REQUIRE_DATABASE_TESTS=1` prevents a missing `TEST_DATABASE_URL` from silently skipping the suite. For local reproduction, set `DATABASE_URL` and `TEST_DATABASE_URL` to a disposable PostgreSQL database, run `pnpm --filter @lab/control-plane... build`, `pnpm --filter @lab/database migrate`, and `REQUIRE_DATABASE_TESTS=1 pnpm --filter @lab/control-plane exec vitest run tests/database.test.ts`.

@@ -5,6 +5,9 @@ import { eq } from 'drizzle-orm';
 import { buildControl } from '../src/app.js';
 import { verifyBundle } from '@lab/bundles';
 const url = process.env.TEST_DATABASE_URL;
+if (process.env.REQUIRE_DATABASE_TESTS === '1' && !url) {
+  throw new Error('TEST_DATABASE_URL is required for PostgreSQL integration tests');
+}
 const suite = url ? describe : describe.skip;
 suite('control plane postgres', () => {
   it('creates identities, issues JWT, rejects rollback and syncs signed bundles', async () => {
@@ -80,6 +83,13 @@ suite('control plane postgres', () => {
         id,
       );
       expect(b.policies).toHaveLength(1);
+      expect(
+        (await app.inject({ method: 'GET', url: '/v1/admin/tenants', headers: sync })).statusCode,
+      ).toBe(401);
+      expect(
+        (await app.inject({ method: 'GET', url: '/v1/sync/other-tenant/bundle', headers: sync }))
+          .statusCode,
+      ).toBe(401);
       const b2 = verifyBundle(
         (await app.inject({ method: 'GET', url: path, headers: sync })).json(),
         new Map([['b', pub]]),
