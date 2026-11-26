@@ -22,7 +22,10 @@ export function registerTokensRoutes(
       .select({ id: agents.id })
       .from(agents)
       .innerJoin(tenants, eq(tenants.id, agents.tenantId))
-      .innerJoin(policies, and(eq(policies.tenantId, agents.tenantId), eq(policies.agentId, agents.id)))
+      .innerJoin(
+        policies,
+        and(eq(policies.tenantId, agents.tenantId), eq(policies.agentId, agents.id)),
+      )
       .where(
         and(
           eq(agents.tenantId, p.tenantId),

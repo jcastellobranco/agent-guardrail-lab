@@ -58,7 +58,10 @@ export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c
     const rows = await db
       .select({ body: policies.body })
       .from(policies)
-      .innerJoin(agents, and(eq(agents.tenantId, policies.tenantId), eq(agents.id, policies.agentId)))
+      .innerJoin(
+        agents,
+        and(eq(agents.tenantId, policies.tenantId), eq(agents.id, policies.agentId)),
+      )
       .innerJoin(tenants, eq(tenants.id, policies.tenantId))
       .where(
         and(
