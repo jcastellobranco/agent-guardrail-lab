@@ -1,0 +1,90 @@
+[
+  {
+    "machine": {
+      "cpu": "AMD EPYC 9V74 80-Core Processor",
+      "logicalCpus": 4,
+      "memoryBytes": 16759427072,
+      "platform": "linux",
+      "kernel": "7.0.0-1020-azure",
+      "node": "v22.23.5",
+      "docker": "29.4.2",
+      "timestamp": "2026-11-26T23:19:29.685Z",
+      "commit": "c63b70750396e93cf7a043eb4749def981b87d09"
+    },
+    "budget": 50,
+    "vus": 1,
+    "duration": "30s",
+    "results": [
+      {
+        "scenario": "without-probes",
+        "p50": 0.5514414999999999,
+        "p95": 0.9602425000000001,
+        "p99": 1.770825339999998,
+        "requests": 40548,
+        "requestsPerSecond": 1351.5779367516552,
+        "httpFailureRate": 0,
+        "invalidEvaluationRate": 0,
+        "budgetViolationRate": 0,
+        "degradedRate": 0,
+        "probeScoredRate": 0
+      },
+      {
+        "scenario": "with-probes",
+        "p50": 37.943731,
+        "p95": 46.96825245,
+        "p99": 48.746746089999995,
+        "requests": 1148,
+        "requestsPerSecond": 38.23804204694694,
+        "httpFailureRate": 0,
+        "invalidEvaluationRate": 0,
+        "budgetViolationRate": 0.005226480836236934,
+        "degradedRate": 0.632404181184669,
+        "probeScoredRate": 0.367595818815331
+      }
+    ]
+  },
+  {
+    "machine": {
+      "cpu": "AMD EPYC 9V74 80-Core Processor",
+      "logicalCpus": 4,
+      "memoryBytes": 16759427072,
+      "platform": "linux",
+      "kernel": "7.0.0-1020-azure",
+      "node": "v22.23.5",
+      "docker": "29.4.2",
+      "timestamp": "2026-11-26T23:20:43.505Z",
+      "commit": "c63b70750396e93cf7a043eb4749def981b87d09"
+    },
+    "budget": 50,
+    "vus": 5,
+    "duration": "30s",
+    "results": [
+      {
+        "scenario": "without-probes",
+        "p50": 1.4711319999999999,
+        "p95": 3.0930564999999985,
+        "p99": 4.779857890000002,
+        "requests": 81082,
+        "requestsPerSecond": 2702.564291900636,
+        "httpFailureRate": 0,
+        "invalidEvaluationRate": 0,
+        "budgetViolationRate": 0,
+        "degradedRate": 0,
+        "probeScoredRate": 0
+      },
+      {
+        "scenario": "with-probes",
+        "p50": 9.186177,
+        "p95": 21.3924009,
+        "p99": 46.90561386,
+        "requests": 13483,
+        "requestsPerSecond": 448.7523517293345,
+        "httpFailureRate": 0,
+        "invalidEvaluationRate": 0,
+        "budgetViolationRate": 0.0021508566342802048,
+        "degradedRate": 1,
+        "probeScoredRate": 0
+      }
+    ]
+  }
+]

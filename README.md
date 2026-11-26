@@ -150,7 +150,7 @@ This runs two scenarios on the same machine, creates a new JWT per run, captures
 | Deterministic only | Pending | Pending | Pending | Pending |
 | With real probes | Pending | Pending | Pending | Pending |
 
-**Machine specs for actual benchmark:** pending. No latency or real-model quality results are claimed. The authoring environment lacked npm registry access, Docker, Helm, Transformers and model weights. Python offline tests were run successfully; the actual model smoke test was skipped. The CI and Compose integration tests are present but not executed in this environment.
+**Measured benchmark:** see [runtime benchmark report](benchmarks/runtime-2026-11-26.md) and [recorded metrics](benchmarks/runtime-2026-11-26.json). Hosted-runner measurements are exploratory, not production guarantees.
 
 ## Design decisions and trade-offs
 
