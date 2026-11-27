@@ -9,6 +9,7 @@
 | `guardrail_policy_cache_age_seconds` | Age of the last verified signed snapshot | Grows while the control plane is unreachable. Past `MAX_POLICY_AGE_MS` the per-policy fail mode applies |
 | `guardrail_policy_bundle_version`, `guardrail_policy_stale` | Active snapshot version, and whether it is stale or missing | Confirms that a policy change has actually arrived |
 | `guardrail_audit_dropped_total` | Audit events lost before durable enqueue | The cost of keeping audit off the hot path |
+| `guardrail_probe_shadow_outcomes_total{probe,version,role,outcome}`, `guardrail_probe_shadow_disagreements_total` | Shadow-mode comparison (see [probe rollout](probe-rollout.md)) | Candidate probe block rate against the current version, before promoting it |
 | `nodejs_eventloop_lag_{p50,p90,p99}_seconds` | Event-loop delay from `perf_hooks.monitorEventLoopDelay`, 10 ms resolution, reset on every scrape | Deadlines are JS timers. If p99 delay approaches the 50 ms budget, timers fire late and requests overshoot their deadline |
 
 prom-client's default metrics already measure event-loop delay with `monitorEventLoopDelay`, so the guardrail sets the resolution explicitly rather than running a second monitor. Alert on p99 delay above about 20 % of the decision budget. That points to CPU saturation or synchronous work, such as policy compilation or a burst of signature checks, that should move to a worker thread.
