@@ -84,6 +84,8 @@ services:
       INFERENCE_URL: ${INFERENCE_URL:-http://inference-service:8001}
       TOOL_UPSTREAMS_JSON: '{"get_balance":"http://mock-tool:9000/tools/get_balance","transfer_money":"http://mock-tool:9000/tools/transfer_money"}'
       PROXY_FLAGGED_CALLS: ${PROXY_FLAGGED_CALLS:-forward}
+      # Set to http://jaeger:4318 with the tracing profile to export spans.
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes: [public-keys:/keys-public:ro, signed-cache:/cache:ro]
     networks: [data-net]
     depends_on: {keys: {condition: service_completed_successfully}, local-db: {condition: service_healthy}, sync-agent: {condition: service_started}, mock-tool: {condition: service_healthy}}
@@ -95,6 +97,12 @@ services:
     volumes: [./scripts:/scripts:ro]
     networks: [data-net]
     healthcheck: {test: [CMD, node, -e, "fetch('http://127.0.0.1:9000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], interval: 2s, timeout: 3s, retries: 30}
+  # Local trace UI at http://127.0.0.1:16686; receives OTLP/HTTP on 4318 from the guardrail.
+  jaeger:
+    profiles: [tracing]
+    image: jaegertracing/jaeger:2.23.0
+    ports: ["127.0.0.1:16686:16686"]
+    networks: [data-net]
   audit-worker:
     build: {context: ., dockerfile: apps/audit-worker/Dockerfile}
     environment: *audit-env
