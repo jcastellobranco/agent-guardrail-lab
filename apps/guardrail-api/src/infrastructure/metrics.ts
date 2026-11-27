@@ -30,7 +30,10 @@ export class PromMetrics implements Metrics {
     this.auditDrops.inc();
   }
   constructor(cache?: () => { age: number; version: number; stale: boolean }) {
-    collectDefaultMetrics({ register: this.registry });
+    // Includes nodejs_eventloop_lag_{p50,p90,p99}_seconds, measured with
+    // perf_hooks.monitorEventLoopDelay and reset on every scrape. A p99 close to the
+    // decision budget means timers fire late and deadlines are overshot.
+    collectDefaultMetrics({ register: this.registry, eventLoopMonitoringPrecision: 10 });
     if (cache) {
       for (const [name, help, get] of [
         [
