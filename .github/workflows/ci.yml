@@ -52,7 +52,7 @@ jobs:
       - name: Verify migration replay
         run: pnpm --filter @lab/database migrate
       - name: Run real PostgreSQL tests
-        run: pnpm --filter @lab/control-plane exec vitest run tests/database.test.ts --reporter=verbose
+        run: pnpm --filter @lab/control-plane exec vitest run database --reporter=verbose
       - name: Run audit queue LISTEN/NOTIFY tests
         run: pnpm --filter @lab/local-audit exec vitest run tests/worker.database.test.ts --reporter=verbose
       - name: PostgreSQL diagnostics
