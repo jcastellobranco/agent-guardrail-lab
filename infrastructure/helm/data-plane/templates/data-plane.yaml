@@ -57,9 +57,15 @@ spec:
             - {name: BUNDLE_PUBLIC_KEY_PATH, value: /keys/bundle.pem}
             - {name: SIGNED_BUNDLE_PATH, value: /cache/bundle.json}
             - {name: SYNC_INTERVAL_MS, value: {{ .Values.syncIntervalMs | quote }}}
+            {{- if and .Values.inference.enabled .Values.inference.syncArtifacts }}
+            - {name: PROBE_ARTIFACT_DIR, value: /artifacts}
+            {{- end }}
           volumeMounts:
             - {name: cache, mountPath: /cache}
             - {name: keys, mountPath: /keys, readOnly: true}
+            {{- if and .Values.inference.enabled .Values.inference.syncArtifacts }}
+            - {name: probes, mountPath: /artifacts}
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
         - name: audit-worker

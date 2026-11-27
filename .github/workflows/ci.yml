@@ -110,4 +110,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
-      - run: helm lint infrastructure/helm/data-plane && helm template lab infrastructure/helm/data-plane >/dev/null && helm template lab infrastructure/helm/data-plane --set inference.enabled=true >/dev/null
+      - run: helm lint infrastructure/helm/data-plane && helm template lab infrastructure/helm/data-plane >/dev/null && helm template lab infrastructure/helm/data-plane --set inference.enabled=true >/dev/null && helm template lab infrastructure/helm/data-plane --set inference.enabled=true --set inference.syncArtifacts=true >/dev/null

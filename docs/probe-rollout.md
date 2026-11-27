@@ -60,3 +60,18 @@ curl -X PUT http://127.0.0.1:8002/v1/admin/tenants/tenant-a/probe-rollouts/jailb
 ## 3. Promote
 
 `POST .../probe-rollouts/:probeId/promote` rewrites, in one transaction, every stored policy that uses the stable version: new version, new thresholds, and a bumped policy version. Promotion lives in the policies, not in the rollout row, so it survives the next rollout replacing that row.
+
+## 4. Signed artifact distribution
+
+A shadow or canary is only useful if every data plane can load the candidate's weights. Artifacts travel like policy bundles: pulled, signed and verified.
+
+1. **Publish.** `node scripts/publish-probe.mjs <artifact.json>` uploads a trained artifact to `PUT /v1/admin/probes/:probeId/versions/:version`. The control plane validates it with `ProbeArtifactSchema` (which mirrors the Python model) and stores the exact JSON text with its SHA-256. Versions are immutable: identical re-uploads are no-ops, and different content under the same version returns `409 ARTIFACT_IMMUTABLE`.
+2. **Serve.** `GET /v1/sync/:tenantId/probes/:probeId/:version` returns `{payload, signature, keyId, algorithm}`, but only for versions the tenant's effective policies use (current, shadow or canary). Other tenants' or unused versions return 404.
+3. **Sign with domain separation.** The bundle key signs `"agent-guardrail-lab/probe-artifact/v1\n" + payload`. A bundle signature can never verify as an artifact signature, or the reverse, even though both use one key.
+4. **Verify before accepting the bundle.** With `PROBE_ARTIFACT_DIR` set (Helm: `inference.syncArtifacts=true`), the sync agent downloads each artifact the incoming bundle lists in `probeVersions` that is not already on disk. For each one it verifies the signature, the schema, and that the artifact is the requested `probeId:version`, then writes it atomically. Only then does it write the bundle. Any failure rejects the bundle and keeps the previous one, so the guardrail never references weights the data plane lacks.
+5. **Hot reload.** The inference service checks its artifact directory every `PROBE_RELOAD_INTERVAL_S` (default 5 s). It builds and validates a complete new probe bank before swapping it in; if any artifact is invalid or incompatible with the loaded model, the current bank keeps serving.
+
+**Remaining gaps:**
+- A new bundle can reach the guardrail up to one reload interval before inference has loaded the new weights. During that window requests for the new version fail, and the policy's fail mode applies.
+- The inference service trusts its local volume and does not re-verify signatures, unlike the guardrail, which re-verifies bundles.
+- Artifact sync is off by default in Compose, because the locally trained artifact volume is owned by the inference user.

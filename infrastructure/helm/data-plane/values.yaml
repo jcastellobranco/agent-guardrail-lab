@@ -10,7 +10,8 @@ existingSecret: guardrail-data-plane
 cacheStorage: 1Gi
 storageClassName: ""
 # Secret keys: jwt.pem, bundle.pem, sync-token, local-audit-database-url
-# Optional probe service uses a pre-populated read-only artifact PVC; model cache must be prepared externally.
+# Optional probe service reads artifacts from a PVC (pre-populated, or filled by the sync agent
+# with syncArtifacts); the model cache must be prepared externally.
 inference:
   enabled: false
   modelRevision: "2290a62"
@@ -18,6 +19,9 @@ inference:
   maxTokens: "256"
   probeVersion: "1.0.0"
   artifactClaim: guardrail-probes
+  # When true, the sync agent downloads signed probe artifacts listed in each bundle into the
+  # artifact PVC (read-write for sync-agent, read-only for inference) before accepting it.
+  syncArtifacts: false
   modelCacheClaim: guardrail-model-cache
   resources:
     requests: {cpu: "1", memory: 1Gi}
