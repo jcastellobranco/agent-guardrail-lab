@@ -27,13 +27,15 @@ inference-serve:
 demo-probes:
 	pnpm demo:probes
 
-.PHONY: up down compose-demo integration benchmark
+.PHONY: up down compose-demo proxy-demo integration benchmark
 up:
 	docker compose up -d --build
 down:
 	docker compose down
 compose-demo:
 	node scripts/compose-demo.mjs demo
+proxy-demo:
+	node scripts/compose-demo.mjs proxy
 integration:
 	bash tests/integration/run.sh
 benchmark:

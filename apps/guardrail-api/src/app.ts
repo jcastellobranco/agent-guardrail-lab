@@ -1,10 +1,22 @@
 import type { AuditEvent } from '@lab/contracts';
-import Fastify from 'fastify';
+import Fastify, { type FastifyRequest } from 'fastify';
 import { performance } from 'node:perf_hooks';
 import { CheckToolCall } from './application/check-tool-call.js';
-import type { PolicyStore, TokenVerifier, InferenceClient } from './application/ports.js';
+import type {
+  PolicyStore,
+  TokenVerifier,
+  InferenceClient,
+  ToolUpstream,
+} from './application/ports.js';
+import { ProxyToolCall, type FlaggedCallMode } from './application/proxy-tool-call.js';
 import { HttpError } from './domain/errors.js';
 import { PromMetrics } from './infrastructure/metrics.js';
+
+const noUpstreams: ToolUpstream = {
+  has: () => false,
+  forward: () => Promise.reject(new HttpError(404, 'TOOL_NOT_REGISTERED')),
+};
+
 export function buildApp(deps: {
   auth: TokenVerifier;
   store: PolicyStore;
@@ -14,6 +26,8 @@ export function buildApp(deps: {
   inference?: InferenceClient;
   headroomMs?: number;
   audit?: { offer(event: AuditEvent): void };
+  toolUpstream?: ToolUpstream;
+  flaggedCalls?: FlaggedCallMode;
 }) {
   const app = Fastify({
     logger: deps.logger ?? false,
@@ -29,6 +43,10 @@ export function buildApp(deps: {
     maxBudgetMs: deps.budgetMs,
     inference: deps.inference,
     headroomMs: deps.headroomMs,
+  });
+  const proxy = new ProxyToolCall({
+    upstream: deps.toolUpstream ?? noUpstreams,
+    flaggedCalls: deps.flaggedCalls ?? 'forward',
   });
   const pending = new WeakMap<object, AuditEvent>();
   app.addHook('onResponse', async (request) => {
@@ -52,13 +70,12 @@ export function buildApp(deps: {
     req.log.error({ code: 'INTERNAL_ERROR' }, 'Guardrail request failed');
     return reply.code(503).send({ error: 'EVALUATION_UNAVAILABLE' });
   });
-  app.post('/v1/check', async (request, reply) => {
-    const authorization = request.headers.authorization;
-    if (!authorization?.startsWith('Bearer ') || !authorization.slice(7))
-      throw new HttpError(401, 'TOKEN_REQUIRED');
-    const decision = await check.execute(
-      authorization.slice(7),
-      request.body,
+
+  /** Runs the guardrail check for this request; the audit event is offered after the response. */
+  const evaluate = (request: FastifyRequest, body: unknown) =>
+    check.execute(
+      bearerToken(request),
+      body,
       starts.get(request),
       deps.audit
         ? (event) => {
@@ -66,8 +83,20 @@ export function buildApp(deps: {
           }
         : undefined,
     );
+
+  app.post('/v1/check', async (request, reply) => {
+    const decision = await evaluate(request, request.body);
     return reply.code(200).send(decision);
   });
+
+  // Enforcement mode: the caller never talks to the tool directly, so a block cannot be ignored.
+  app.post<{ Params: { tool: string } }>('/v1/proxy/:tool', async (request, reply) => {
+    const result = await proxy.execute(request.params.tool, request.body, (call) =>
+      evaluate(request, call),
+    );
+    return reply.code(result.forwarded ? 200 : 403).send(result);
+  });
+
   app.get('/health/live', async () => ({ status: 'ok' }));
   app.get('/health/ready', async (_req, reply) => {
     const ready = deps.store.ready();
@@ -83,4 +112,11 @@ export function buildApp(deps: {
     reply.type(metrics.registry.contentType).send(await metrics.registry.metrics()),
   );
   return app;
+}
+
+function bearerToken(request: FastifyRequest): string {
+  const authorization = request.headers.authorization;
+  const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : '';
+  if (!token) throw new HttpError(401, 'TOKEN_REQUIRED');
+  return token;
 }

@@ -1,4 +1,11 @@
-import type { AgentClaims, StageName, InferenceRequest, InferenceResponse } from '@lab/contracts';
+import type {
+  AgentClaims,
+  Decision,
+  StageName,
+  InferenceRequest,
+  InferenceResponse,
+  ToolCall,
+} from '@lab/contracts';
 import type { CompiledPolicy } from '@lab/policy-engine';
 export interface TokenVerifier {
   verify(token: string): Promise<AgentClaims>;
@@ -28,4 +35,14 @@ export interface Metrics {
 
 export interface InferenceClient {
   score(request: InferenceRequest, signal: AbortSignal): Promise<InferenceResponse>;
+}
+
+export interface UpstreamResponse {
+  status: number;
+  body: unknown;
+}
+
+export interface ToolUpstream {
+  has(tool: string): boolean;
+  forward(call: ToolCall, decision: Decision): Promise<UpstreamResponse>;
 }
