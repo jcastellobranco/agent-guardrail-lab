@@ -2,118 +2,82 @@
 
 [![CI](https://github.com/jcastellobranco/agent-guardrail-lab/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jcastellobranco/agent-guardrail-lab/actions/workflows/ci.yml)
 
-A learning and portfolio project for latency-sensitive, tenant-aware runtime enforcement of AI agent tool calls. A local guardrail evaluates deterministic restrictions and optional activation probes before returning allow, flag or block. Centralized policy administration is separated from customer-side enforcement, auditing and model inference. This project is not an implementation or description of any real company's architecture.
-
-**Status:** CI-validated learning project with PostgreSQL integration, container builds, model evaluation and measured runtime benchmarks. Not a production security boundary.
-
-## Engineering highlights
-
-- Local enforcement separates the latency-sensitive data plane from centralized policy administration.
-- Signed policy snapshots and tenant-scoped authentication support disconnected enforcement.
-- PostgreSQL integration tests run against a disposable database in CI.
-- Measured deterministic throughput reached 2,703 requests/s at five virtual users, with p99 of 4.78 ms on a four-CPU hosted runner.
-- CPU inference is a known bottleneck: the five-user probe scenario was entirely degraded under a 50 ms budget. See the [measured report](benchmarks/runtime-2026-11-26.md).
+A runtime guardrail for AI agent tool calls. Before an agent runs a tool (say, `transfer_money`), the call goes to a guardrail running next to the agent in the customer's environment. Within a 50 ms budget, the guardrail checks the agent's identity, applies the tenant's signed policy (allow/deny lists, numeric limits, regex rules), and can optionally score the call with linear probes on a small language model's activations. It answers `allow`, `flag` or `block`, or, in proxy mode, forwards the call to the tool only if allowed. A central control plane manages tenants and policies, but nothing on the request path depends on it: the data plane keeps enforcing from its last signed snapshot when the control plane is down. This is a learning and portfolio project, not a description of any real company's system and not a production security boundary.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
   subgraph CP[Control plane]
-    Admin[Fastify admin API]
-    DB[(Postgres / Neon)]
+    Admin[Fastify admin + sync API]
+    DB[(Postgres)]
     Admin --> DB
   end
   subgraph DP[Customer data plane - one tenant]
-    Agent[Agent / caller]
-    Sync[Pull-only sync agent]
-    Cache[(Signed cache file)]
+    Agent[Agent]
     G[Fastify guardrail]
+    Tool[Tool / upstream API]
+    Sync[Pull-only sync agent]
+    Cache[(Signed bundle + probe artifacts)]
     I[FastAPI + DistilGPT2 + probes]
-    Q[(Local PostgreSQL queue)]
+    Q[(Local Postgres queue)]
     W[Audit worker]
-    A[(Local audit records)]
     T[Telemetry exporter]
     Agent -->|JWT + tool call| G
-    G -->|allow flag block| Agent
-    Sync --> Cache
-    Cache --> G
-    G -->|optional deadline-bound score| I
-    G -. after response .-> Q
-    Q --> W --> A --> T
+    G -->|proxy mode: only if allowed| Tool
+    G -->|deadline-bound score| I
+    Sync --> Cache --> G
+    Cache --> I
+    G -. after response + NOTIFY .-> Q --> W
+    W --> T
   end
-  Sync -->|HTTPS pull + verify signature| Admin
-  T -->|HTTPS aggregate metrics only| Admin
+  Sync -->|HTTPS pull, verify Ed25519| Admin
+  T -->|aggregate counts only| Admin
 ```
 
-### Request flow
+### What happens on a request
 
-1. Validate bounded JSON and verify a short-lived Ed25519 JWT using preloaded public keys (`kid`, issuer, audience, expiry, `sub`, tenant and agent identity).
-2. Read the tenant's immutable policy snapshot and local revocations; missing or mismatched identities are rejected, without a database query.
-3. Evaluate precompiled RE2JS regex and numeric restrictions, deny/allow lists, and fail closed for incomplete deterministic checks.
-4. Only if not blocked and probes enabled, send bounded tool JSON to local inference. Use the remaining global request deadline minus response headroom; abort the HTTP call on timeout.
-5. Combine findings with block > flag > allow precedence. `flag` permits execution with a review marker; the caller must enforce the result. Inference errors use policy fail-open/closed while preserving deterministic blocks.
-6. Send HTTP 200 for evaluated decisions, including blocks. Invalid request/auth use 400/401/403/413; unexpected evaluation failure uses 503. The caller must never treat non-200/invalid responses as permission.
-7. After response, hand the full local trace to a bounded asynchronous buffer. A separate transactional queue worker inserts records idempotently. Export one-minute aggregate metrics only.
+1. The guardrail checks the body size and JSON depth, then verifies the agent's short-lived Ed25519 JWT against public keys already in memory.
+2. It looks up the agent's policy in the in-memory signed snapshot, with no database call. Revoked tokens and mismatched tenant or agent identities are rejected here.
+3. It runs the precompiled deterministic rules: deny and allow lists, numeric limits, and RE2 regexes that cannot backtrack. If these rules can't finish, the answer is `block`.
+4. If nothing has blocked yet and the policy enables probes, it sends the tool call to the local inference service, using whatever is left of the request deadline, and aborts the call if time runs out.
+5. It combines the findings: block beats flag, and flag beats allow. If inference fails, the policy's fail mode decides, but a deterministic block always stands.
+6. It answers `200` with the decision (`/v1/check`), or forwards the call to the tool and returns its response (`/v1/proxy/:tool`). Errors are never permission: callers must treat any non-200 as "do not run".
+7. After responding, it hands the trace to a bounded in-memory buffer. That buffer writes it to a local Postgres queue and wakes the audit worker with `NOTIFY`. Only one-minute aggregate counts ever leave the customer's environment.
 
-## Quickstart — Docker Compose
+## Quickstart
 
-Requires Docker with Compose v2, and Node 22 for host demo/benchmark scripts. With images built and cached, deterministic startup is designed to take under five minutes. A cold image build or dependency install needs network and may take longer.
+Requires Docker with Compose v2 and Node 22 on the host for the demo scripts.
 
 ```bash
 docker compose up -d --build
 docker compose up -d --wait guardrail-api
-make compose-demo
-curl http://127.0.0.1:8000/metrics
+make compose-demo   # allow, block (over the 10,000 limit), flag (note matches SECRET-[0-9]+)
+make proxy-demo     # the same three calls through proxy mode: only allowed and flagged ones reach the tool
+curl -s http://127.0.0.1:8000/metrics | grep guardrail_
 ```
 
-Compose initializes two PostgreSQL 17 databases, generates **separate JWT and policy signing keys**, migrates the control DB, seeds a tenant/policy, and pulls the first signed snapshot. Localhost ports: 8000 guardrail, 8002 control plane; the inference service and database ports are not published. `make compose-demo` issues a five-minute token and demonstrates allow, block, flag. The seeded rules permit transfers up to 10,000 and flag notes matching `SECRET-[0-9]+`. Local development HTTP and default credentials are deliberately insecure and must not be reused outside the lab. `docker compose down` preserves named volumes; `docker compose down -v` deletes all local data and keys.
+On a warm Docker cache this took 34 s end to end (Apple M4, Docker Desktop). The first build downloads base images and dependencies, so it takes longer. Compose creates two Postgres databases, generates separate JWT and bundle signing keys, seeds a tenant and policy, and pulls the first signed snapshot. Only the guardrail (8000) and control plane (8002) are published on localhost. The credentials are deliberately local-only. `docker compose down -v` deletes everything.
 
-### Optional real inference
+More profiles:
+- **Real inference:** `LATENCY_BUDGET_MS=500 docker compose --profile probes up -d --build`, then `PROBES_ENABLED=1 POLICY_LATENCY_BUDGET_MS=500 node scripts/compose-demo.mjs policy`. The first model download and probe training take several minutes.
+- **Tracing:** `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318 docker compose --profile tracing up -d`, then open http://127.0.0.1:16686.
+- **Without Docker:** see [operations](docs/operations.md).
 
-The first download and training can take longer than five minutes. Start the model profile, then enable probes on the existing demo policy with an exploratory latency budget. This is not a measured guarantee.
+## Features
 
-```bash
-LATENCY_BUDGET_MS=500 docker compose --profile probes up -d --build
-# Wait for the inference container to become healthy.
-docker compose --profile probes up -d --wait inference-service
-PROBES_ENABLED=1 POLICY_LATENCY_BUDGET_MS=500 node scripts/compose-demo.mjs policy
-# Wait for the next policy sync (default five seconds).
-make compose-demo
-```
-
-To restore deterministic-only mode: `node scripts/compose-demo.mjs policy`. The default enforcement budget is 50 ms. The Python service rejects new inference when its single forward-pass slot is occupied; cancelling HTTP does not necessarily stop PyTorch work. Probe scores are illustrative, not proven security classifications.
-
-### Without Docker (milestones 1–2)
-
-```bash
-corepack enable
-corepack prepare pnpm@10.12.4 --activate
-make setup
-make dev
-# other terminal
-make demo
-```
-
-This mode deliberately permits an unsigned local development fixture, which is rejected when `NODE_ENV=production`. `pnpm keys` generates local dev keys and a demo bundle; restart the API after changes. The dev command builds once and watches compiled server output; rebuild after changing TypeScript. No lockfile was generated offline: run `pnpm install` and commit `pnpm-lock.yaml`, then switch CI/Docker to frozen lockfile installs. Never commit `.dev-keys`, tokens, customer traces or credentials.
-
-For standalone Python: `make inference-setup`, `make inference-test`, `make inference-train`, `make inference-serve`. See [inference service](apps/inference-service/README.md).
-
-## Services and endpoints
-
-| Service | Role |
-|---|---|
-| guardrail-api | `POST /v1/check` (advisory), `POST /v1/proxy/:tool` (enforcing), `/health/live`, `/health/ready`, `/health/serving`, `/metrics` |
-| inference-service | `POST /v1/score`, health endpoints; internal only |
-| control-plane | `/v1/admin/tenants`, nested `/agents`, `/policy`, `/token`, `/revoke`; `/v1/sync/:tenantId/bundle`, `/probe-versions`, `/telemetry` |
-| sync-agent | Outbound polling, no inbound port; signed file atomic rename |
-| audit-worker | Postgres durable queue consumption, retries, dead letters |
-| telemetry-exporter | Local aggregate observations, durable window cursor and authenticated HTTPS upload |
-
-Admin endpoints use a distinct high-entropy bearer credential; sync endpoints use tenant-scoped credentials. The lab exposes list/create/update/soft-delete operations and rejects non-increasing policy versions. Tenant/agent/policy deletion means deactivation, not destructive history removal. Bundle and JWT signing keys are separated. The sync agent authenticates HTTPS, verifies signatures over exact serialized bytes, rejects unknown keys, cross-tenant bundles, expired incoming bundles and non-increasing versions. Guardrail verifies again. A signed snapshot survives restart on a persistent local volume. A compromised filesystem can still roll back the whole persistent volume. Bundle freshness is based on issuance, not reload time. When unreachable, the last valid cache continues until maximum age or expiry; after that, per-policy failure mode applies. `/health/ready` reports freshness, `/health/serving` reports whether a snapshot is loaded so the Helm service still routes stale-policy checks.
+| Area | What it does | Details |
+|---|---|---|
+| Enforcement | `/v1/check` advises; `/v1/proxy/:tool` forwards to an allowlisted upstream only when permitted, so a blocked call cannot reach the tool | [Proxy mode](#proxy-mode-enforcement-instead-of-advice) |
+| SDK | `@lab/sdk`: `check`, `guard`, `proxy`, one deadline across retries, retries only 503 and connection failures, never treats an error as allow | [packages/sdk](packages/sdk/README.md) |
+| Policy distribution | Signed, versioned, tenant-scoped bundles pulled by the data plane; rollback and replay rejected | [ADR 0009](docs/adr/0009-signed-pull-sync.md) |
+| Probes | One DistilGPT2 forward pass, all probes as one matrix multiply; shadow scoring, canary rollout with automatic rollback, signed artifact sync with hot reload | [Probe rollout](docs/probe-rollout.md) |
+| Audit | Postgres queue with `SKIP LOCKED`, idempotent inserts, retries and a dead-letter table; LISTEN/NOTIFY wake-up with polling as reconciliation | [ADR 0013](docs/adr/0013-listen-notify-wakeup.md) |
+| Observability | Stage histograms, event-loop delay, cache age, shadow comparison counters; OpenTelemetry spans per stage to Jaeger | [Observability](docs/observability.md) |
 
 ## Proxy mode: enforcement instead of advice
 
-`POST /v1/check` returns a decision and trusts the caller to respect it. That is an SDK-style check: a buggy, compromised or prompt-injected agent can skip the call, ignore a `block`, or treat an error as permission, because it still holds a direct route to the tool.
+`POST /v1/check` returns a decision and trusts the caller to respect it. That is an SDK-style check: a buggy, compromised or prompt-injected agent can skip the call, ignore a `block`, or treat an error as permission, because it still has a direct route to the tool.
 
 `POST /v1/proxy/:tool` removes that route. The agent sends the call to the guardrail, which runs the same evaluation and forwards it to the tool's upstream URL only when the decision permits it:
 
@@ -126,96 +90,79 @@ Admin endpoints use a distinct high-entropy bearer credential; sync endpoints us
 | permitted but no upstream configured | 404 `TOOL_NOT_REGISTERED` | no |
 | upstream unreachable, timed out or oversized response | 502 | attempted |
 
-Configure the allowlist with `TOOL_UPSTREAMS_JSON` (tool name to URL) and the tool timeout with `TOOL_UPSTREAM_TIMEOUT_MS`. Only URLs in that map are ever contacted, so the proxy cannot be steered at arbitrary hosts. The tool name comes from the path and must match the body, so the evaluated call is the forwarded call. The agent's JWT is not forwarded. The tool receives `x-guardrail-decision-id` and `x-guardrail-outcome` so it can correlate with the audit trail.
+Only URLs in `TOOL_UPSTREAMS_JSON` are ever contacted. The tool name comes from the path and must match the body, so the evaluated call is the forwarded call. The agent's JWT is not forwarded.
 
-The guarantee depends on the network, not the code: the tool must accept traffic only from the guardrail. In Compose, `mock-tool` has no published port and sits on the internal data network. In Kubernetes this means a NetworkPolicy, or mTLS where the tool verifies the guardrail's identity. The latency budget covers the decision only; tool execution time is bounded separately.
+The guarantee depends on the network, not on the code: the tool must accept traffic only from the guardrail. In Compose, `mock-tool` has no published port. In Kubernetes that means a NetworkPolicy, or mTLS where the tool verifies the guardrail's identity.
 
-```bash
-# after the Quickstart stack is up
-make proxy-demo   # allowed → 200, over limit → 403, flagged → 200
-```
+## Benchmarks
 
-## Model and probe evaluation
+Measured on a GitHub-hosted runner (AMD EPYC 9V74, 4 vCPUs, 15.6 GiB RAM), 30 s per scenario after a 5 s warm-up, 50 ms budget, fail-closed, with the k6 load generator on the same machine. Full numbers are in the [run report](benchmarks/runtime-2026-11-26.md) ([raw metrics](benchmarks/runtime-2026-11-26.json)).
 
-DistilGPT2 (~82M parameters) runs on CPU. A hook captures the fourth transformer block (zero-based 3), mean-pools token activations (768 dimensions), and computes all active probe logits with one matrix operation: `sigmoid(W @ h + b)`. No text generation or vocabulary logits. Training fits a scaler and logistic regression on a stratified training split; the holdout reports precision, recall, FPR and confusion matrix. Scaling is folded into weights. Artifacts bind probe version, model snapshot, layer, token limit, input format, dataset hash and split seed. Policy requests exact `probeId:version`; mismatches fail according to policy. The 40-sample toy dataset is educational, English-only and not production validation. Artifacts are prepared locally, not downloaded by the sync agent. The signed policy bundle carries required probe version metadata; artifact signing and distribution are future work.
+| Scenario | VUs | p50 | p95 | p99 | Throughput | Probe-scored | Degraded |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Deterministic only | 1 | 0.55 ms | 0.96 ms | 1.77 ms | 1,352 req/s | n/a | 0 % |
+| Deterministic only | 5 | 1.47 ms | 3.09 ms | 4.78 ms | 2,703 req/s | n/a | 0 % |
+| With real probes | 1 | 37.9 ms | 47.0 ms | 48.8 ms | 38 req/s | 36.8 % | 63.2 % |
+| With real probes | 5 | 9.2 ms | 21.4 ms | 46.9 ms | 449 req/s | 0 % | 100 % |
 
-## Audit, telemetry and database
+**How to read this:**
+- The deterministic path is about 1–5 ms, so most of the 50 ms budget is free.
+- With CPU inference, the budget is the bottleneck. With one user, 63 % of calls timed out and failed closed.
+- With five users, *every* call was degraded, so the low latency in that row is fast failure, not fast scoring. That fits the inference service's single forward-pass slot rejecting concurrent requests, but the run did not record failure reasons, so timeout versus saturation is still unconfirmed.
+- That is the fail-closed design working as intended, and the honest trade-off: real-time probes need a GPU, a smaller model, or a larger budget.
 
-The control and data planes use separate databases. Local queue uses `FOR UPDATE SKIP LOCKED`, a savepoint and atomic insert/ack. Decision UUID is the idempotency key; invalid/failed records get delayed retries and a DLQ after three attempts. Producers can lose events before durable enqueue on crash or overload; `guardrail_audit_dropped_total` exposes this. The optional LISTEN/NOTIFY optimization is not implemented; a future direct session connection can wake polling, but NOTIFY is not durable. Do not use a transaction-mode pooler for LISTEN.
-
-The exporter reads only observation fields, aggregates decision counts per policy/probe, disjoint score buckets, p50/p95/p99 by stage, observed cache age and versions. A strict allowlist schema rejects unexpected fields at all nested levels; prompts, arguments, agent IDs and full traces are not sent. Ingest deduplicates by tenant/deployment/window. Windows use processing time, not original event time. Empty windows have zero observed cache age and version; local Prometheus gauges expose live freshness. The lab uses a bounded window query (10,000 events); larger windows stall with explicit warning rather than silently truncating. A production system should use bounded histograms/SQL aggregation and partitioned tables, retention, encryption, role-based access, and privacy thresholds.
-
-Control migrations use Drizzle: `pnpm --filter @lab/database migrate` with `DATABASE_URL`. The active expand migration adds `display_name` and backfills; the API dual-writes `name` and `display_name`. A separate example contract migration is not in the active journal: switch all readers/writers, backfill once more, then enforce NOT NULL and remove `name` in a later release. Never apply the example before the cutover. Use an isolated Neon project/parent for PR branches; missing `NEON_API_KEY` or `NEON_PROJECT_ID` secrets skips CI branch setup. See [Neon branch action](https://github.com/neondatabase/create-branch-action) and [Cosign](https://github.com/sigstore/cosign).
-
-## Kubernetes and releases
-
-The Helm chart deploys a single-tenant data-plane pod with guardrail, sync agent, audit worker, telemetry exporter, and optional inference sidecar. Provide a persistent local audit DB initialized with `packages/local-audit/sql/001_queue.sql`, a Secret containing public verification keys and sync/local DB credentials, and optionally pre-populated artifact/model PVCs. No private signing keys belong in the data plane. For actual production, add network policies, separate service identities, TLS/mTLS, hardened secrets, storage encryption and backups. See `infrastructure/helm/data-plane/values.yaml`.
+A relaxed-budget run has not been recorded yet. To reproduce, or to measure your own machine with a relaxed budget:
 
 ```bash
-helm lint infrastructure/helm/data-plane
-helm template lab infrastructure/helm/data-plane
-# After provisioning secrets, database, images and storage:
-helm upgrade --install lab infrastructure/helm/data-plane
+LATENCY_BUDGET_MS=500 docker compose --profile probes up -d --build
+VUS=1 DURATION=30s BENCHMARK_BUDGET_MS=500 make benchmark   # requires k6 on the host
 ```
-
-CI runs TS lint/typecheck/tests/build, Python tests, actual candidate probe training and an FPR regression gate against the PR base, image builds, Compose integration, and Helm lint/render. The FPR gate rejects incomparable dataset/split/threshold metadata and regressions >5 percentage points, with a 60% bootstrap ceiling for toy data. The probe gate runs in CI; release publishing is not verified here. Neon PR branch workflow creates schema-only branches, creates a fresh temporary database per CI run (role requires CREATEDB), migrates and tests, deletes on PR close and sets expiration. Tags like `v0.6.0` trigger image builds to GHCR and keyless Cosign signatures by digest. Use protected tags and required CI checks before releasing; no images or tags have been published from this environment.
-
-## Tests and benchmarks
-
-```bash
-pnpm install
-pnpm lint && pnpm typecheck && pnpm test && pnpm build
-make inference-test
-make integration     # isolated Compose project, tests allow/block/flag/timeout/open/closed/outage/staleness/queue
-```
-
-Install k6 on the host, run the `probes` Compose profile and wait for inference to be healthy, then:
-
-```bash
-VUS=5 DURATION=30s BENCHMARK_BUDGET_MS=50 make benchmark
-```
-
-This runs two scenarios on the same machine, creates a new JWT per run, captures p50/p95/p99 of valid HTTP evaluations, degraded and probe-scored rates, and writes raw summaries and CPU/RAM/kernel/Docker info to `benchmarks/results/`. A fast fail-closed timeout is not successful AI inference; compare the probe-scored rate alongside latency. Increase `LATENCY_BUDGET_MS` before Compose startup and `BENCHMARK_BUDGET_MS` for a relaxed CPU budget. The runner resets the demo policy afterward. Stop other local workloads before benchmarking.
-
-| Scenario | p50 | p95 | p99 | Probe scored / degraded |
-|---|---|---|---|---|
-| Deterministic only | Pending | Pending | Pending | Pending |
-| With real probes | Pending | Pending | Pending | Pending |
-
-**Measured benchmark:** see [runtime benchmark report](benchmarks/runtime-2026-11-26.md) and [recorded metrics](benchmarks/runtime-2026-11-26.json). Hosted-runner measurements are exploratory, not production guarantees.
 
 ## Design decisions and trade-offs
 
 | Decision | Rationale and limitations |
 |---|---|
 | Fastify vs Hono | Persistent Node services, explicit lifecycle hooks and structured logs; Hono is attractive for edge runtimes. |
-| Rules vs probes vs LLM judge | Rules are predictable and cheap; probes capture learned signals with one forward pass; LLM judging can use richer context but costs more latency, so better as async review. |
-| Sync vs async | Enforcement is synchronous within a deadline; audit and telemetry run asynchronously with explicit loss/retry trade-offs. |
-| Fail open vs closed | Availability vs safety; fail-open is limited to degraded optional checks, never authentication, isolation or known deterministic violations. |
-| Silo vs pool | Silo offers stronger workload/data separation with greater cost. Pool requires RLS, tenant quotas, tenant-aware rate limiting and fair scheduling; not implemented. |
-| Kubernetes vs managed inference | Local Kubernetes keeps sensitive inputs local and predictable; managed endpoints simplify scaling but add network and governance constraints. |
-| JWT vs API keys | Offline verification avoids per-request database calls; short token TTL and synced revocation trade freshness for resilience. Admin/sync use separately scoped credentials. |
-| PostgreSQL queue vs SQS | Local durable Postgres supports transactional idempotence and offline deployments; SQS reduces broker operations but requires cloud connectivity and consumer deduplication. |
-| Single deadline vs per-call timeouts | Remaining-time budget protects end-to-end latency. JS timers are not hard real-time guarantees; monitor event loop delay and offload heavy policy compilation/crypto bursts to workers if needed. |
+| Rules vs probes vs LLM judge | Rules are predictable and cheap; probes capture learned signals with one forward pass; an LLM judge can use richer context but costs far more latency, so it fits asynchronous review better. |
+| Sync vs async | Enforcement is synchronous within a deadline; audit and telemetry are asynchronous, with explicit loss and retry trade-offs. |
+| Fail open vs closed | Availability vs safety. Fail-open is limited to degraded optional checks, never authentication, isolation or known deterministic violations. |
+| Advisory check vs proxy | A check is easy to adopt but trivially bypassed; a proxy enforces, but only with network isolation, and it puts the guardrail on the tool's availability path. |
+| Silo vs pool | Silo gives stronger workload and data separation at greater cost. Pool would need RLS, tenant quotas, tenant-aware rate limiting and fair scheduling; not implemented. |
+| Kubernetes vs managed inference | Local inference keeps sensitive inputs in the customer's environment with predictable latency; managed endpoints simplify scaling but add network and governance constraints. |
+| JWT vs API keys | Offline verification avoids per-request database calls; a short TTL plus synced revocation trades freshness for resilience. Admin and sync use separately scoped credentials. |
+| PostgreSQL queue vs SQS | A local Postgres queue gives transactional idempotence and works offline; SQS removes broker operations but needs cloud connectivity and consumer deduplication. |
+| NOTIFY vs polling | NOTIFY gives millisecond wake-up but isn't durable, so polling stays as the correctness path. |
+| Single deadline vs per-call timeouts | A remaining-time budget protects end-to-end latency. JS timers are not hard real-time, so event-loop delay is exported, and heavy work belongs in worker threads. |
+| Canary signal: block rate | Needs no labels and catches a probe that over-blocks; cannot catch one that under-blocks, which still needs labelled evaluation. |
 
-## Limitations and next steps
+## What I learned
 
-- `/v1/check` is advisory. `/v1/proxy/:tool` enforces only if the network prevents direct agent-to-tool traffic. The proxy speaks plain JSON over HTTP, not MCP. Flag handling is a deployment setting, not part of the per-agent policy.
-- Toy dataset and small model cannot establish jailbreak detection efficacy. Add representative multilingual, adversarial and independently labeled evaluation sets, calibration, shadow/canary rollout and reviewed thresholds.
-- A 50 ms default budget is a target, not a hard SLA. CPU inference may frequently time out; load-test before choosing hardware/model and concurrency.
-- Local key files and sync credentials are a lab mechanism. Add KMS/rotation, trusted enrollment, mTLS, per-tenant rate limits, RLS/non-owner DB roles for pool mode, supply-chain pinning and independent security review.
-- Raw audit records remain customer-side; production requires encryption at rest, access controls, retention/redaction, stronger queue delivery, retry monitoring and recovery tooling. Telemetry is a bounded prototype, not a lossless compliance pipeline.
-- Sync assumes a single writer and a protected volume. Probe artifacts are locally provisioned; no remote artifact distribution/signatures or automatic rollback. No LISTEN/NOTIFY bonus yet.
-- All workflows and infrastructure are implementation candidates until validated in CI. No fabricated results or production-readiness claims.
+> Draft: rewrite these in your own words before sharing.
 
-See [ADRs](docs/adr/) for the reasoning behind architectural choices.
+- **A deadline is a budget, not a timeout.** Passing the *remaining* time to each stage, and failing closed when it runs out, made latency predictable. The benchmarks then showed that the expensive part (CPU inference) needs a different budget, not a faster check.
+- **Advice is not enforcement.** `/v1/check` only works if the caller cooperates. Making the guardrail a proxy, and making the network the actual boundary, is what turns a policy into a control.
+- **Durability and latency are separate problems.** In the audit queue, Postgres rows give durability and NOTIFY gives latency. Treating NOTIFY as a hint, with polling as reconciliation, keeps both without trusting the fast path for correctness.
+- **Ship a model like code.** Signed, immutable artifacts, a shadow phase and a canary with automatic rollback made a probe version change reversible. Measuring block rate taught me exactly what that signal can and can't detect.
+- **Errors must never look like permission.** That rule ended up everywhere: HTTP status design, the SDK (`throw`, never `allow`), the sync agent (reject the bundle rather than reference missing weights).
 
-## Dependency maintenance
+## Limitations
 
-Use Node 22 and pnpm 10.12.4. Run `pnpm install --frozen-lockfile` for normal installs. After intentionally changing package manifests, run `pnpm install --no-frozen-lockfile` and commit the updated lockfile.
+- Toy dataset (40 English examples) and a small model: the probes demonstrate the mechanism, not jailbreak-detection quality.
+- CPU inference does not fit a 50 ms budget under load (see benchmarks); 50 ms is a target, not an SLA.
+- Proxy mode enforces only with network isolation, speaks JSON over HTTP rather than MCP, and handles flagged calls with a deployment setting rather than per-agent policy.
+- Keys live in local files and sync credentials are static. Production would need KMS and rotation, trusted enrollment, mTLS, per-tenant rate limits, and an independent security review.
+- Audit events can be lost before durable enqueue (crash or overload, counted by `guardrail_audit_dropped_total`); raw audit records would need encryption, retention and access controls.
+- Single-tenant silo only. The inference service trusts its local artifact volume and does not re-verify signatures.
 
-The Python lock targets Linux x86-64, Python 3.12 and CPU PyTorch. To regenerate it in a fresh virtual environment, install `torch==2.10.0` from `https://download.pytorch.org/whl/cpu`, install `apps/inference-service/requirements.txt`, and run `pip freeze > apps/inference-service/requirements.lock.txt`. For normal installs, install CPU torch first and then the lockfile. Run `pip check` after installation. This is a version lock, not a hash-verified lock or a cross-platform guarantee.
+Architecture decisions: [docs/adr](docs/adr/). Operations, Helm, releases and dependency maintenance: [docs/operations.md](docs/operations.md).
 
-### PostgreSQL integration checks
+## Tests
 
-CI provisions an isolated PostgreSQL 17 service, builds the workspace dependencies, applies migrations twice to verify replay, and runs the Control Plane database suite directly (without Turbo caching). `REQUIRE_DATABASE_TESTS=1` prevents a missing `TEST_DATABASE_URL` from silently skipping the suite. For local reproduction, set `DATABASE_URL` and `TEST_DATABASE_URL` to a disposable PostgreSQL database, run `pnpm --filter @lab/control-plane... build`, `pnpm --filter @lab/database migrate`, and `REQUIRE_DATABASE_TESTS=1 pnpm --filter @lab/control-plane exec vitest run tests/database.test.ts`.
+```bash
+pnpm install --frozen-lockfile
+pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build
+make inference-test   # Python: ruff + pytest
+make integration      # isolated Compose stack: allow/block/flag, proxy, timeouts, fail open/closed, outage, staleness, audit queue
+```
+
+Postgres-backed suites (control plane, canary rollouts, artifacts, audit worker) run in CI against a real database; see [operations](docs/operations.md#postgresql-tests) to run them locally.
