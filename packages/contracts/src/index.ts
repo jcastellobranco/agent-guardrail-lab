@@ -241,6 +241,48 @@ export const SignedPolicyBundleSchema = z
     algorithm: z.literal('Ed25519'),
   })
   .strict();
+const Probability = z.number().min(0).max(1);
+const NonNegativeInt = z.number().int().nonnegative();
+/** Mirrors the inference service's ProbeArtifact, so the control plane rejects what Python would. */
+export const ProbeArtifactSchema = z
+  .object({
+    schemaVersion: z.literal(1).default(1),
+    probeId: ProbeSegment,
+    version: ProbeSegment,
+    modelVersion: Id,
+    inputFormat: z.string().min(1).max(256),
+    weights: z.array(z.number().finite()).min(1).max(4096),
+    bias: z.number().finite(),
+    metrics: z
+      .object({
+        precision: Probability,
+        recall: Probability,
+        false_positive_rate: Probability,
+        threshold: Probability,
+        train_size: z.number().int().positive(),
+        test_size: z.number().int().positive(),
+        true_negatives: NonNegativeInt,
+        false_positives: NonNegativeInt,
+        false_negatives: NonNegativeInt,
+        true_positives: NonNegativeInt,
+      })
+      .strict(),
+    datasetSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    seed: z.number().int(),
+  })
+  .strict();
+export type ProbeArtifact = z.infer<typeof ProbeArtifactSchema>;
+export const SignedProbeArtifactSchema = z
+  .object({
+    payload: z.string().max(2_000_000),
+    signature: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]+$/)
+      .max(128),
+    keyId: Id,
+    algorithm: z.literal('Ed25519'),
+  })
+  .strict();
 const Count = z.number().int().nonnegative();
 export const Stage = z.enum(['auth', 'policy', 'rules', 'inference', 'decision']);
 export type StageName = z.infer<typeof Stage>;
