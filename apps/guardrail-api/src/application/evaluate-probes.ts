@@ -1,7 +1,9 @@
 import {
   InferenceRequestSchema,
   InferenceResponseSchema,
+  probeKeys,
   type AgentPolicy,
+  type Decision,
   type ToolCall,
 } from '@lab/contracts';
 import type { Finding } from '@lab/policy-engine';
@@ -13,6 +15,27 @@ export class InferenceFailure extends Error {
     super(code);
   }
 }
+
+/** How the current and candidate (shadow) versions of one probe classified the same call. */
+export interface ShadowComparison {
+  probeId: string;
+  currentVersion: string;
+  candidateVersion: string;
+  current: Decision['outcome'];
+  candidate: Decision['outcome'];
+}
+
+export interface ProbeHooks {
+  onModelVersion?: (version: string) => void;
+  onShadow?: (comparisons: ShadowComparison[]) => void;
+}
+
+const classify = (score: number, thresholds: { flagThreshold: number; blockThreshold: number }) =>
+  score >= thresholds.blockThreshold
+    ? 'block'
+    : score >= thresholds.flagThreshold
+      ? 'flag'
+      : 'allow';
 
 export function encodeToolText(call: ToolCall): string {
   // No tenant ID or token; the model sees tool data only inside the data plane.
@@ -28,7 +51,7 @@ export async function evaluateProbes(
   policy: AgentPolicy,
   client: InferenceClient | undefined,
   budgetMs: number,
-  onModelVersion?: (version: string) => void,
+  hooks: ProbeHooks = {},
 ): Promise<Finding[]> {
   const deadline = performance.now() + budgetMs;
   if (budgetMs <= 0) throw new InferenceFailure('INFERENCE_TIMEOUT');
@@ -36,7 +59,8 @@ export async function evaluateProbes(
   const configs = policy.probes.configurations;
   const request = InferenceRequestSchema.safeParse({
     text: encodeToolText(call),
-    probeIds: configs.map((c) => `${c.probeId}:${c.version}`),
+    // Shadow versions ride in the same request: one forward pass, one more matrix row each.
+    probeIds: probeKeys(policy),
   });
   if (!request.success) throw new InferenceFailure('INFERENCE_INPUT_LIMIT');
   const remaining = deadline - performance.now();
@@ -63,11 +87,11 @@ export async function evaluateProbes(
       request.data.probeIds.some((id) => !Object.hasOwn(scores, id))
     )
       throw new InferenceFailure('INFERENCE_INVALID_RESPONSE');
+    // Only current versions produce findings; shadow scores never influence the decision.
     const findings = configs.map<Finding>((c) => {
       const id = `${c.probeId}:${c.version}`,
         score = scores[id]!;
-      const outcome =
-        score >= c.blockThreshold ? 'block' : score >= c.flagThreshold ? 'flag' : 'allow';
+      const outcome = classify(score, c);
       return {
         outcome,
         reason: {
@@ -84,7 +108,21 @@ export async function evaluateProbes(
       };
     });
     if (performance.now() >= deadline) throw new InferenceFailure('INFERENCE_TIMEOUT');
-    onModelVersion?.(response.data.modelVersion);
+    hooks.onModelVersion?.(response.data.modelVersion);
+    const comparisons = configs.flatMap<ShadowComparison>((c) =>
+      c.shadow
+        ? [
+            {
+              probeId: c.probeId,
+              currentVersion: c.version,
+              candidateVersion: c.shadow.version,
+              current: classify(scores[`${c.probeId}:${c.version}`]!, c),
+              candidate: classify(scores[`${c.probeId}:${c.shadow.version}`]!, c.shadow),
+            },
+          ]
+        : [],
+    );
+    if (comparisons.length) hooks.onShadow?.(comparisons);
     return findings;
   } catch (error) {
     if (error instanceof InferenceFailure) throw error;

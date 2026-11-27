@@ -143,8 +143,11 @@ export class CheckToolCall {
             policy,
             this.inference,
             deadline - this.now() - this.headroomMs,
-            (v) => {
-              modelVersion = v;
+            {
+              onModelVersion: (version) => {
+                modelVersion = version;
+              },
+              onShadow: (comparisons) => this.metrics.shadow?.(comparisons),
             },
           )),
         );

@@ -1,5 +1,6 @@
 import { Registry, Histogram, Counter, Gauge, collectDefaultMetrics } from 'prom-client';
 import type { Metrics } from '../application/ports.js';
+import type { ShadowComparison } from '../application/evaluate-probes.js';
 import type { StageName } from '@lab/contracts';
 export class PromMetrics implements Metrics {
   readonly registry = new Registry();
@@ -26,6 +27,42 @@ export class PromMetrics implements Metrics {
     help: 'Audit events lost before durable queue insertion',
     registers: [this.registry],
   });
+  // Block-rate comparison: rate(outcome="block") / rate(all) per role, for current vs candidate.
+  private readonly shadowOutcomes = new Counter({
+    name: 'guardrail_probe_shadow_outcomes_total',
+    help: 'Shadow-mode probe outcomes by role (current decides, candidate is observed only)',
+    labelNames: ['probe', 'version', 'role', 'outcome'] as const,
+    registers: [this.registry],
+  });
+  private readonly shadowDisagreements = new Counter({
+    name: 'guardrail_probe_shadow_disagreements_total',
+    help: 'Calls where the candidate probe version would have decided differently',
+    labelNames: ['probe', 'current_outcome', 'candidate_outcome'] as const,
+    registers: [this.registry],
+  });
+  shadow(comparisons: readonly ShadowComparison[]) {
+    for (const c of comparisons) {
+      this.shadowOutcomes.inc({
+        probe: c.probeId,
+        version: c.currentVersion,
+        role: 'current',
+        outcome: c.current,
+      });
+      this.shadowOutcomes.inc({
+        probe: c.probeId,
+        version: c.candidateVersion,
+        role: 'candidate',
+        outcome: c.candidate,
+      });
+      if (c.current !== c.candidate) {
+        this.shadowDisagreements.inc({
+          probe: c.probeId,
+          current_outcome: c.current,
+          candidate_outcome: c.candidate,
+        });
+      }
+    }
+  }
   auditDrop() {
     this.auditDrops.inc();
   }

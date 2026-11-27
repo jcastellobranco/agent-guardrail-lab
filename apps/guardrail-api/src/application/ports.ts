@@ -7,6 +7,7 @@ import type {
   ToolCall,
 } from '@lab/contracts';
 import type { CompiledPolicy } from '@lab/policy-engine';
+import type { ShadowComparison } from './evaluate-probes.js';
 export interface TokenVerifier {
   verify(token: string): Promise<AgentClaims>;
 }
@@ -31,6 +32,7 @@ export interface Metrics {
   stage(stage: StageName, elapsedMs: number): void;
   decision(outcome: 'allow' | 'flag' | 'block', degraded: boolean): void;
   stale(): void;
+  shadow?(comparisons: readonly ShadowComparison[]): void;
 }
 
 export interface InferenceClient {
