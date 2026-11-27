@@ -1,3 +1,5 @@
+import json
+import time
 from pathlib import Path
 import threading
 import torch
@@ -177,3 +179,58 @@ def test_validation_does_not_echo_prompt():
     with TestClient(create_app(lambda: ProbeBank(FakeEmbedder(), [artifact()]))) as c:
         result = c.post("/v1/score", json={"text": "PRIVATE_TEXT", "probeIds": []})
         assert result.status_code == 422 and "PRIVATE_TEXT" not in result.text
+
+
+def score(client, key):
+    return client.post("/v1/score", json={"text": "hello", "probeIds": [key]})
+
+
+def app_with_artifacts(directory, **kwargs):
+    factory = lambda: ProbeBank(FakeEmbedder(), load_artifacts(directory))  # noqa: E731
+    return create_app(factory, probe_dir=directory, **kwargs)
+
+
+def test_reload_adds_a_downloaded_probe_version(tmp_path):
+    (tmp_path / "jailbreak-1.0.0.json").write_text(artifact().model_dump_json())
+    app = app_with_artifacts(tmp_path)
+    with TestClient(app) as c:
+        assert score(c, "jailbreak:2.0.0").status_code == 422
+        assert app.state.reloader.reload() is False  # nothing changed yet
+
+        # The sync agent writes JSON.stringify output, where 1.0 becomes 1.
+        candidate = artifact(version="2.0.0").model_dump()
+        candidate["weights"], candidate["bias"] = [1, -1], 0
+        (tmp_path / "jailbreak-2.0.0.json").write_text(json.dumps(candidate))
+
+        assert app.state.reloader.reload() is True
+        assert score(c, "jailbreak:2.0.0").status_code == 200
+        assert "jailbreak:2.0.0" in c.get("/health/ready").json()["probeIds"]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "{}",
+        artifact(version="3.0.0").model_copy(update={"modelVersion": "other"}).model_dump_json(),
+    ],
+)
+def test_reload_keeps_serving_when_new_artifacts_are_invalid(tmp_path, content):
+    (tmp_path / "jailbreak-1.0.0.json").write_text(artifact().model_dump_json())
+    app = app_with_artifacts(tmp_path)
+    with TestClient(app) as c:
+        (tmp_path / "broken.json").write_text(content)
+
+        assert app.state.reloader.reload() is False
+        assert score(c, "jailbreak:1.0.0").status_code == 200
+        assert c.get("/health/ready").json()["probeIds"] == ["jailbreak:1.0.0"]
+
+
+def test_background_watcher_picks_up_new_artifacts(tmp_path):
+    (tmp_path / "jailbreak-1.0.0.json").write_text(artifact().model_dump_json())
+    with TestClient(app_with_artifacts(tmp_path, reload_interval_s=0.02)) as c:
+        (tmp_path / "jailbreak-2.0.0.json").write_text(artifact(version="2.0.0").model_dump_json())
+        for _ in range(100):
+            if "jailbreak:2.0.0" in c.get("/health/ready").json()["probeIds"]:
+                break
+            time.sleep(0.02)
+        assert score(c, "jailbreak:2.0.0").status_code == 200

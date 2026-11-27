@@ -1,6 +1,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+import logging
 import os
 from pathlib import Path
 from threading import Lock
@@ -11,6 +12,8 @@ from starlette.responses import JSONResponse
 from .contracts import ScoreRequest, ScoreResponse
 from .model import InputTooLong, load_embedder
 from .probes import ProbeBank, load_artifacts
+
+logger = logging.getLogger("inference_lab")
 
 
 class BodyLimit:
@@ -58,15 +61,61 @@ def production_bank():
     return bank
 
 
-def create_app(bank_factory=production_bank):
+def artifact_fingerprint(directory: Path) -> tuple:
+    """Names, sizes and modification times: cheap to compute, changes when a file is replaced."""
+    return tuple(
+        sorted((p.name, p.stat().st_size, p.stat().st_mtime_ns) for p in directory.glob("*.json"))
+    )
+
+
+class ArtifactReloader:
+    """Swaps in a new ProbeBank when the artifact directory changes, without a restart.
+
+    The new bank is fully built and validated before the swap; if any artifact is invalid or
+    incompatible, the current bank keeps serving. Requests read app.state.bank once, so an
+    in-flight request finishes on the bank it started with.
+    """
+
+    def __init__(self, app, directory: Path):
+        self.app, self.directory = app, directory
+        self.seen = artifact_fingerprint(directory) if directory.exists() else ()
+
+    def reload(self) -> bool:
+        fingerprint = artifact_fingerprint(self.directory)
+        if fingerprint == self.seen:
+            return False
+        # Remember failures too, so a bad file is reported once rather than every interval.
+        self.seen = fingerprint
+        try:
+            current = self.app.state.bank
+            self.app.state.bank = ProbeBank(current.embedder, load_artifacts(self.directory))
+        except Exception:
+            logger.warning("Probe artifacts changed but failed validation; keeping current set")
+            return False
+        logger.info("Reloaded probe artifacts: %s", sorted(self.app.state.bank.indices))
+        return True
+
+
+def create_app(bank_factory=production_bank, probe_dir: Path | None = None, reload_interval_s=0.0):
+    async def watch(reloader: ArtifactReloader):
+        while True:
+            await asyncio.sleep(reload_interval_s)
+            await asyncio.to_thread(reloader.reload)
+
     @asynccontextmanager
     async def lifespan(app):
         bank = bank_factory()
         pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="probe")
         app.state.bank, app.state.pool, app.state.slot = bank, pool, Lock()
+        app.state.reloader = ArtifactReloader(app, probe_dir) if probe_dir else None
+        watcher = None
+        if app.state.reloader and reload_interval_s > 0:
+            watcher = asyncio.create_task(watch(app.state.reloader))
         try:
             yield
         finally:
+            if watcher:
+                watcher.cancel()
             await asyncio.to_thread(pool.shutdown, wait=True, cancel_futures=True)
             close = getattr(bank.embedder, "close", None)
             if close:
@@ -128,4 +177,7 @@ def create_app(bank_factory=production_bank):
     return app
 
 
-app = create_app()
+app = create_app(
+    probe_dir=Path(os.getenv("PROBE_DIR", "artifacts")),
+    reload_interval_s=float(os.getenv("PROBE_RELOAD_INTERVAL_S", "5")),
+)
