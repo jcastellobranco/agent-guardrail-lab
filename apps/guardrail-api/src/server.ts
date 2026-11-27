@@ -3,6 +3,7 @@ import { PromMetrics } from './infrastructure/metrics.js';
 import { refreshSignedCache } from './infrastructure/signed-cache.js';
 import { readFile } from 'node:fs/promises';
 import { HttpInferenceClient } from './infrastructure/http-inference-client.js';
+import { HttpToolUpstream } from './infrastructure/http-tool-upstream.js';
 import { buildApp } from './app.js';
 import { readConfig } from './config.js';
 import { JwtVerifier } from './infrastructure/jwt.js';
@@ -65,6 +66,11 @@ const app = buildApp({
   logger: true,
   inference: new HttpInferenceClient(config.INFERENCE_URL),
   headroomMs: config.INFERENCE_HEADROOM_MS,
+  toolUpstream: new HttpToolUpstream({
+    urls: config.TOOL_UPSTREAMS_JSON,
+    timeoutMs: config.TOOL_UPSTREAM_TIMEOUT_MS,
+  }),
+  flaggedCalls: config.PROXY_FLAGGED_CALLS,
 });
 app.addHook('onClose', async () => {
   if (refreshTimer) clearInterval(refreshTimer);
