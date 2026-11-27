@@ -8,9 +8,19 @@ import {
   TelemetryWindowSchema,
   PolicyBundleSchema,
   probeKeys,
+  ProbeSegment,
 } from '@lab/contracts';
-import { signBundle } from '@lab/bundles';
-import { tenants, agents, policies, revocations, telemetry, probeRollouts } from '@lab/database';
+import { signBundle, signProbeArtifact } from '@lab/bundles';
+import { z } from 'zod';
+import {
+  tenants,
+  agents,
+  policies,
+  revocations,
+  telemetry,
+  probeRollouts,
+  probeArtifacts,
+} from '@lab/database';
 import { applyRollouts } from '../rollouts/canary.js';
 import { evaluateActiveRollouts } from '../rollouts/service.js';
 import type { Config } from '../config.js';
@@ -67,33 +77,22 @@ export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c
   });
   sync.get('/:tenantId/probe-versions', async (req) => {
     const tenantId = Id.parse((req.params as { tenantId: string }).tenantId);
-    const rollouts = await db
-      .select()
-      .from(probeRollouts)
-      .where(eq(probeRollouts.tenantId, tenantId));
-    const rows = await db
-      .select({ body: policies.body })
-      .from(policies)
-      .innerJoin(
-        agents,
-        and(eq(agents.tenantId, policies.tenantId), eq(agents.id, policies.agentId)),
-      )
-      .innerJoin(tenants, eq(tenants.id, policies.tenantId))
-      .where(
-        and(
-          eq(policies.tenantId, tenantId),
-          eq(policies.active, true),
-          eq(agents.active, true),
-          eq(tenants.active, true),
-        ),
-      );
-    return {
-      probeVersions: [
-        ...new Set(
-          rows.flatMap((r) => probeKeys(applyRollouts(AgentPolicySchema.parse(r.body), rollouts))),
-        ),
-      ],
-    };
+    return { probeVersions: await tenantProbeKeys(db, tenantId) };
+  });
+  // Serves a signed artifact only if one of the tenant's effective policies uses it.
+  sync.get('/:tenantId/probes/:probeId/:version', async (req, reply) => {
+    const { tenantId, probeId, version } = ArtifactParams.parse(req.params);
+    const key = `${probeId}:${version}`;
+    if (!(await tenantProbeKeys(db, tenantId)).includes(key)) {
+      return reply.code(404).send({ error: 'NOT_FOUND' });
+    }
+    const [row] = await db
+      .select({ payload: probeArtifacts.payload })
+      .from(probeArtifacts)
+      .where(and(eq(probeArtifacts.probeId, probeId), eq(probeArtifacts.version, version)));
+    return row
+      ? signProbeArtifact(row.payload, c.bundlePem, c.bundleKid)
+      : reply.code(404).send({ error: 'NOT_FOUND' });
   });
   sync.post('/:tenantId/telemetry', async (req, reply) => {
     const tenantId = Id.parse((req.params as { tenantId: string }).tenantId),
@@ -112,4 +111,31 @@ export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c
     await evaluateActiveRollouts(db, tenantId);
     return reply.code(204).send();
   });
+}
+
+const ArtifactParams = z.object({ tenantId: Id, probeId: ProbeSegment, version: ProbeSegment });
+
+/** Every probe key the tenant's active agents score, after canary substitution. */
+async function tenantProbeKeys(db: ControlDatabase, tenantId: string): Promise<string[]> {
+  const rollouts = await db
+    .select()
+    .from(probeRollouts)
+    .where(eq(probeRollouts.tenantId, tenantId));
+  const rows = await db
+    .select({ body: policies.body })
+    .from(policies)
+    .innerJoin(agents, and(eq(agents.tenantId, policies.tenantId), eq(agents.id, policies.agentId)))
+    .innerJoin(tenants, eq(tenants.id, policies.tenantId))
+    .where(
+      and(
+        eq(policies.tenantId, tenantId),
+        eq(policies.active, true),
+        eq(agents.active, true),
+        eq(tenants.active, true),
+      ),
+    );
+  const keys = rows.flatMap((r) =>
+    probeKeys(applyRollouts(AgentPolicySchema.parse(r.body), rollouts)),
+  );
+  return [...new Set(keys)];
 }

@@ -89,6 +89,21 @@ export const probeRollouts = pgTable(
   (t) => [primaryKey({ columns: [t.tenantId, t.probeId] })],
 );
 export type ProbeRollout = typeof probeRollouts.$inferSelect;
+/**
+ * Immutable probe artifacts. `payload` is the exact JSON text that gets signed, so the
+ * bytes a data plane verifies are the bytes that were uploaded and validated.
+ */
+export const probeArtifacts = pgTable(
+  'probe_artifacts',
+  {
+    probeId: text('probe_id').notNull(),
+    version: text('version').notNull(),
+    payload: text('payload').notNull(),
+    sha256: text('sha256').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.probeId, t.version] })],
+);
 export function database(url: string) {
   const pool = new pg.Pool({ connectionString: url, max: 10 });
   return { pool, db: drizzle(pool) };
