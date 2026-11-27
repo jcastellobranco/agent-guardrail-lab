@@ -243,7 +243,7 @@ export const SignedPolicyBundleSchema = z
   .strict();
 const Probability = z.number().min(0).max(1);
 const NonNegativeInt = z.number().int().nonnegative();
-/** Mirrors the inference service's ProbeArtifact, so the control plane rejects what Python would. */
+/** Mirrors the inference service's ProbeArtifact: the control plane rejects what Python would. */
 export const ProbeArtifactSchema = z
   .object({
     schemaVersion: z.literal(1).default(1),

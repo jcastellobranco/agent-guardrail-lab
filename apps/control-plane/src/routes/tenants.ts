@@ -30,7 +30,8 @@ export function registerTenantsRoutes(admin: FastifyInstance, db: ControlDatabas
     return row ?? reply.code(404).send({ error: 'NOT_FOUND' });
   });
   admin.delete('/tenants/:tenantId', async (req, reply) => {
-    const id = Id.parse((req.params as { tenantId: string }).tenantId); // Soft removal: disable all agents; retain audit and revocation scope.
+    // Soft removal: disable all agents; retain audit and revocation scope.
+    const id = Id.parse((req.params as { tenantId: string }).tenantId);
     await db.update(tenants).set({ active: false }).where(eq(tenants.id, id));
     return reply.code(204).send();
   });

@@ -95,7 +95,10 @@ export async function processOne(pool: pg.Pool, maxAttempts = 3): Promise<boolea
   try {
     await client.query('BEGIN');
     const r = await client.query(
-      'SELECT decision_id,event,attempts FROM audit_queue WHERE available_at<=now() ORDER BY available_at,decision_id LIMIT 1 FOR UPDATE SKIP LOCKED',
+      `SELECT decision_id, event, attempts FROM audit_queue
+       WHERE available_at <= now()
+       ORDER BY available_at, decision_id
+       LIMIT 1 FOR UPDATE SKIP LOCKED`,
     );
     const row = r.rows[0];
     if (!row) {
@@ -108,7 +111,9 @@ export async function processOne(pool: pg.Pool, maxAttempts = 3): Promise<boolea
       if (e.decision.decisionId !== row.decision_id) throw new Error('Decision ID mismatch');
       // Idempotent side effect and acknowledgment share a transaction.
       await client.query(
-        'INSERT INTO audit_records(decision_id,tenant_id,event,processed_at) VALUES($1,$2,$3,clock_timestamp()) ON CONFLICT DO NOTHING',
+        `INSERT INTO audit_records(decision_id, tenant_id, event, processed_at)
+         VALUES ($1, $2, $3, clock_timestamp())
+         ON CONFLICT DO NOTHING`,
         [row.decision_id, e.tenantId, JSON.stringify(e)],
       );
       await client.query('DELETE FROM audit_queue WHERE decision_id=$1', [row.decision_id]);
@@ -117,13 +122,16 @@ export async function processOne(pool: pg.Pool, maxAttempts = 3): Promise<boolea
       const attempts = Number(row.attempts) + 1;
       if (attempts >= maxAttempts) {
         await client.query(
-          'INSERT INTO audit_dead_letter(decision_id,event,attempts) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',
+          `INSERT INTO audit_dead_letter(decision_id, event, attempts)
+           VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
           [row.decision_id, row.event, attempts],
         );
         await client.query('DELETE FROM audit_queue WHERE decision_id=$1', [row.decision_id]);
       } else
         await client.query(
-          "UPDATE audit_queue SET attempts=$2,available_at=now()+($2*interval '5 seconds') WHERE decision_id=$1",
+          `UPDATE audit_queue
+           SET attempts = $2, available_at = now() + ($2 * interval '5 seconds')
+           WHERE decision_id = $1`,
           [row.decision_id, attempts],
         );
     }
@@ -143,7 +151,8 @@ export function percentile(values: number[], p: number) {
   const a = [...values].sort((x, y) => x - y);
   return a[Math.max(0, Math.ceil(p * a.length) - 1)]!;
 }
-// Only explicit projections leave the data plane. No arbitrary string or object spreading from a trace.
+// Only explicit projections leave the data plane.
+// No arbitrary string or object spreading from a trace.
 export function aggregate(
   tenantId: string,
   deploymentId: string,

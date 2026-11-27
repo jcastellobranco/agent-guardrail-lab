@@ -30,7 +30,8 @@ export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c
     const tenantId = Id.parse((req.params as { tenantId: string }).tenantId);
     const bundle = await db.transaction(
       async (tx) => {
-        // Repeatable read plus retry by next poll on concurrent writer conflict; monotonic version persisted in Postgres.
+        // Repeatable read, retried by the next poll on a concurrent writer conflict.
+        // The monotonic bundle version is persisted in Postgres.
         const [tenant] = await tx
           .update(tenants)
           .set({ bundleVersion: sql`${tenants.bundleVersion}+1` })

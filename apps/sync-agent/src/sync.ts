@@ -54,7 +54,8 @@ export async function syncProbeArtifacts(c: SyncConfig, probeKeys: readonly stri
     const file = join(dir, `${probeId}-${version}.json`);
     if (await exists(file)) continue;
 
-    const path = `/v1/sync/${encodeURIComponent(c.tenantId)}/probes/${encodeURIComponent(probeId)}/${encodeURIComponent(version)}`;
+    const segments = [c.tenantId, 'probes', probeId, version].map(encodeURIComponent);
+    const path = `/v1/sync/${segments.join('/')}`;
     const raw = await fetchBounded(c, path, MAX_ARTIFACT_BYTES);
     const { payload } = verifyProbeArtifact(JSON.parse(raw), c.keys, key);
     // Written world-readable: the inference service runs as a different user.

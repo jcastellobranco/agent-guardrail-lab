@@ -178,7 +178,7 @@ suite('probe canary rollout on postgres', () => {
     expect([...after.values()].every((v) => v === '1.0.0')).toBe(true);
   });
 
-  it('rejects changing versions while a rollout is active, and promotion rewrites policies', async () => {
+  it('rejects version changes during a rollout, and promotion rewrites policies', async () => {
     const body = {
       stableVersion: '1.0.0',
       canaryVersion: '3.0.0',

@@ -19,7 +19,9 @@ for (const s of ['SIGINT', 'SIGTERM'] as const)
 async function tick() {
   // Use processing-time windows. A 10s grace absorbs ordinary short worker transactions.
   await pool.query(
-    `INSERT INTO telemetry_cursor(tenant_id,deployment_id,next_window) VALUES($1,$2,date_trunc('minute',now())-interval '1 minute') ON CONFLICT DO NOTHING`,
+    `INSERT INTO telemetry_cursor(tenant_id, deployment_id, next_window)
+     VALUES ($1, $2, date_trunc('minute', now()) - interval '1 minute')
+     ON CONFLICT DO NOTHING`,
     [tenant, deployment],
   );
   const cursor = await pool.query(
@@ -29,9 +31,14 @@ async function tick() {
   const start: Date = cursor.rows[0].next_window,
     end = new Date(start.getTime() + 60000);
   if (end.getTime() + 10000 > Date.now()) return;
-  // Explicit bound: never silently truncate a window. Oversize windows need operator intervention/SQL aggregation.
+  // Explicit bound: never silently truncate a window.
+  // Oversize windows need operator intervention or SQL-side aggregation.
   const rows = await pool.query(
-    "SELECT event - 'call' - 'agentId' - 'timestamp' AS event FROM audit_records WHERE tenant_id=$1 AND processed_at >=$2 AND processed_at <$3 ORDER BY processed_at,decision_id LIMIT 10001",
+    `SELECT event - 'call' - 'agentId' - 'timestamp' AS event
+     FROM audit_records
+     WHERE tenant_id = $1 AND processed_at >= $2 AND processed_at < $3
+     ORDER BY processed_at, decision_id
+     LIMIT 10001`,
     [tenant, start, end],
   );
   if (rows.rowCount! > 10000) throw new Error('Telemetry window exceeded lab capacity');
@@ -43,7 +50,8 @@ async function tick() {
   );
   await sendTelemetry(url, token, window, process.env.ALLOW_INSECURE_LOCAL_HTTP === '1');
   await pool.query(
-    'UPDATE telemetry_cursor SET next_window=$3 WHERE tenant_id=$1 AND deployment_id=$2 AND next_window=$4',
+    `UPDATE telemetry_cursor SET next_window = $3
+     WHERE tenant_id = $1 AND deployment_id = $2 AND next_window = $4`,
     [tenant, deployment, end, start],
   );
 }
