@@ -20,7 +20,8 @@ Training downloads the DistilGPT2 safetensors and tokenizer from the Hugging Fac
 | MODEL_LAYER | 3 | Zero-based fourth transformer block |
 | MODEL_MAX_TOKENS | 256 | Reject overlong inputs, no silent truncation |
 | TORCH_NUM_THREADS | 2 | CPU intra-op thread count |
-| PROBE_DIR | artifacts | Trusted local JSON artifacts at service startup |
+| PROBE_DIR | artifacts | Trusted local JSON artifacts, loaded at startup and re-checked for changes |
+| PROBE_RELOAD_INTERVAL_S | 5 | How often to check `PROBE_DIR` for new artifacts; a changed set is validated in full before it replaces the current one. `0` disables reloading |
 
 Use the same model variables in training and serving. Training uses a stratified 75/25 split of 40 handwritten English examples. Labels: 1 = toy jailbreak attempt, 0 = benign. This tiny synthetic dataset and its holdout are **not** a credible security benchmark. The script reports held-out precision, recall, false-positive rate, confusion matrix, and sample counts at threshold 0.5. Runtime flag/block thresholds are configurable and must be calibrated against a separate representative dataset; the reported FPR does not automatically apply at other thresholds. The model is frozen throughout. Training creates `artifacts/jailbreak-1.0.0.json`; it refuses to overwrite an existing filename. For a new version, run `python -m inference_lab.train --version 1.0.1` and update the policy separately. Do not deploy same-version artifacts with different contents. Artifacts are local generated files, intentionally gitignored.
 
