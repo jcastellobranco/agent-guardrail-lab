@@ -17,9 +17,31 @@ export function localPool(url: string) {
     statement_timeout: 5000,
   });
 }
+/** A dedicated session for LISTEN; never taken from the pool. */
+export function listenerClient(url: string, options: pg.ClientConfig = {}) {
+  if (!url) throw new Error('Local audit database URL required');
+  return new pg.Client({
+    connectionString: url,
+    application_name: 'audit-listener',
+    keepAlive: true,
+    connectionTimeoutMillis: 2000,
+    ...options,
+  });
+}
+
+/** Channel used to wake the audit worker. The payload is empty: NOTIFY never carries trace data. */
+export const AUDIT_CHANNEL = 'audit_events';
+
 export async function enqueue(pool: pg.Pool, event: AuditEvent) {
+  // One autocommit statement: the notification is delivered only if the row commits,
+  // and duplicates (ON CONFLICT) do not wake the worker.
   await pool.query(
-    'INSERT INTO audit_queue(decision_id,event) VALUES($1,$2) ON CONFLICT DO NOTHING',
+    `WITH inserted AS (
+       INSERT INTO audit_queue(decision_id, event) VALUES ($1, $2)
+       ON CONFLICT DO NOTHING
+       RETURNING 1
+     )
+     SELECT pg_notify('${AUDIT_CHANNEL}', '') FROM inserted`,
     [event.decision.decisionId, JSON.stringify(event)],
   );
 }
@@ -114,6 +136,8 @@ export async function processOne(pool: pg.Pool, maxAttempts = 3): Promise<boolea
     client.release();
   }
 }
+export { AuditWorker, type AuditWorkerOptions, type ListenerClient } from './worker.js';
+
 export function percentile(values: number[], p: number) {
   if (!values.length) return 0;
   const a = [...values].sort((x, y) => x - y);
