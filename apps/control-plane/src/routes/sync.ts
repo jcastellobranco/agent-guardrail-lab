@@ -10,7 +10,9 @@ import {
   probeKeys,
 } from '@lab/contracts';
 import { signBundle } from '@lab/bundles';
-import { tenants, agents, policies, revocations, telemetry } from '@lab/database';
+import { tenants, agents, policies, revocations, telemetry, probeRollouts } from '@lab/database';
+import { applyRollouts } from '../rollouts/canary.js';
+import { evaluateActiveRollouts } from '../rollouts/service.js';
 import type { Config } from '../config.js';
 
 export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c: Config) {
@@ -31,10 +33,15 @@ export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c
             .select()
             .from(revocations)
             .where(and(eq(revocations.tenantId, tenantId), gt(revocations.expiresAt, new Date())));
+        const rollouts = await tx
+          .select()
+          .from(probeRollouts)
+          .where(eq(probeRollouts.tenantId, tenantId));
         const active = new Set(as.filter((a) => a.active && tenant.active).map((a) => a.id));
+        // Canary agents receive the canary probe version; the stored policy is unchanged.
         const parsed = ps
           .filter((p) => p.active && active.has(p.agentId))
-          .map((p) => AgentPolicySchema.parse(p.body));
+          .map((p) => applyRollouts(AgentPolicySchema.parse(p.body), rollouts));
         const now = Date.now();
         // Includes shadow versions, so data planes provision every artifact they will score.
         const probeVersions: Record<string, string> = {};
@@ -60,6 +67,10 @@ export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c
   });
   sync.get('/:tenantId/probe-versions', async (req) => {
     const tenantId = Id.parse((req.params as { tenantId: string }).tenantId);
+    const rollouts = await db
+      .select()
+      .from(probeRollouts)
+      .where(eq(probeRollouts.tenantId, tenantId));
     const rows = await db
       .select({ body: policies.body })
       .from(policies)
@@ -77,7 +88,11 @@ export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c
         ),
       );
     return {
-      probeVersions: [...new Set(rows.flatMap((r) => probeKeys(AgentPolicySchema.parse(r.body))))],
+      probeVersions: [
+        ...new Set(
+          rows.flatMap((r) => probeKeys(applyRollouts(AgentPolicySchema.parse(r.body), rollouts))),
+        ),
+      ],
     };
   });
   sync.post('/:tenantId/telemetry', async (req, reply) => {
@@ -94,6 +109,7 @@ export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c
         body: b,
       })
       .onConflictDoNothing();
+    await evaluateActiveRollouts(db, tenantId);
     return reply.code(204).send();
   });
 }

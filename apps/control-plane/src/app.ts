@@ -9,6 +9,7 @@ import { registerAgentsRoutes } from './routes/agents.js';
 import { registerPoliciesRoutes } from './routes/policies.js';
 import { registerTokensRoutes } from './routes/tokens.js';
 import { registerSyncRoutes } from './routes/sync.js';
+import { registerRolloutRoutes } from './routes/rollouts.js';
 
 export async function buildControl(db: ControlDatabase, c: Config) {
   const app = Fastify({ bodyLimit: 4_000_000, logger: false });
@@ -28,6 +29,7 @@ export async function buildControl(db: ControlDatabase, c: Config) {
       registerAgentsRoutes(admin, db);
       registerPoliciesRoutes(admin, db);
       registerTokensRoutes(admin, db, c, jwtKey);
+      registerRolloutRoutes(admin, db);
     },
     { prefix: '/v1/admin' },
   );
