@@ -39,5 +39,8 @@ const Config = z.object({
   TOOL_UPSTREAMS_JSON: ToolUpstreams,
   TOOL_UPSTREAM_TIMEOUT_MS: z.coerce.number().int().min(1).max(60000).default(5000),
   PROXY_FLAGGED_CALLS: z.enum(['forward', 'block']).default('forward'),
+  // Tracing is off unless an OTLP/HTTP collector base URL is set, e.g. http://jaeger:4318.
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.preprocess((v) => (v === '' ? undefined : v), HttpUrl.optional()),
+  OTEL_SERVICE_NAME: z.string().min(1).default('guardrail-api'),
 });
 export const readConfig = () => Config.parse(process.env);

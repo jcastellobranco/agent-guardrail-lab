@@ -1,4 +1,5 @@
 import type { AuditEvent } from '@lab/contracts';
+import type { Tracer } from '@opentelemetry/api';
 import Fastify, { type FastifyRequest } from 'fastify';
 import { performance } from 'node:perf_hooks';
 import { CheckToolCall } from './application/check-tool-call.js';
@@ -28,6 +29,7 @@ export function buildApp(deps: {
   audit?: { offer(event: AuditEvent): void };
   toolUpstream?: ToolUpstream;
   flaggedCalls?: FlaggedCallMode;
+  tracer?: Tracer;
 }) {
   const app = Fastify({
     logger: deps.logger ?? false,
@@ -43,6 +45,7 @@ export function buildApp(deps: {
     maxBudgetMs: deps.budgetMs,
     inference: deps.inference,
     headroomMs: deps.headroomMs,
+    tracer: deps.tracer,
   });
   const proxy = new ProxyToolCall({
     upstream: deps.toolUpstream ?? noUpstreams,

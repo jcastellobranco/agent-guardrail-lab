@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
+import { context, trace, SpanStatusCode, type Span, type Tracer } from '@opentelemetry/api';
 import { ToolCallSchema, type Decision, type StageName, type AuditEvent } from '@lab/contracts';
 import { decide, type Finding } from '@lab/policy-engine';
 import type { Metrics, PolicyStore, TokenVerifier, InferenceClient } from './ports.js';
@@ -13,7 +14,12 @@ export interface CheckToolCallOptions {
   now?: () => number;
   inference?: InferenceClient;
   headroomMs?: number;
+  /** Defaults to the global tracer, which is a no-op unless tracing is configured. */
+  tracer?: Tracer;
 }
+
+/** performance.now() is relative to process start; spans need wall-clock milliseconds. */
+const toEpochMs = (monotonicMs: number) => performance.timeOrigin + monotonicMs;
 
 export class CheckToolCall {
   private readonly auth: TokenVerifier;
@@ -23,6 +29,7 @@ export class CheckToolCall {
   private readonly now: () => number;
   private readonly inference?: InferenceClient;
   private readonly headroomMs: number;
+  private readonly tracer: Tracer;
 
   constructor(options: CheckToolCallOptions) {
     this.auth = options.auth;
@@ -32,25 +39,61 @@ export class CheckToolCall {
     this.now = options.now ?? (() => performance.now());
     this.inference = options.inference;
     this.headroomMs = options.headroomMs ?? 5;
+    this.tracer = options.tracer ?? trace.getTracer('guardrail-api');
   }
+
   async execute(
     token: string,
     body: unknown,
     startedAt = this.now(),
     onAudit?: (event: AuditEvent) => void,
   ): Promise<Decision> {
+    const root = this.tracer.startSpan('guardrail.check', { startTime: toEpochMs(startedAt) });
+    try {
+      const decision = await this.evaluate(root, token, body, startedAt, onAudit);
+      root.setAttributes({
+        'guardrail.outcome': decision.outcome,
+        'guardrail.degraded': decision.degraded,
+        'guardrail.policy_id': decision.policyId,
+        'guardrail.policy_version': decision.policyVersion,
+      });
+      return decision;
+    } catch (error) {
+      // Only the error code is recorded: messages and arguments never enter a trace.
+      const code = error instanceof HttpError ? error.code : 'EVALUATION_UNAVAILABLE';
+      root.setAttribute('guardrail.error', code);
+      root.setStatus({ code: SpanStatusCode.ERROR, message: code });
+      throw error;
+    } finally {
+      root.end();
+    }
+  }
+
+  private async evaluate(
+    root: Span,
+    token: string,
+    body: unknown,
+    startedAt: number,
+    onAudit?: (event: AuditEvent) => void,
+  ): Promise<Decision> {
     const stages: AuditEvent['stages'] = [];
     let modelVersion: string | undefined;
-    const record = (stage: StageName, ms: number) => {
-      this.metrics.stage(stage, ms);
-      if (onAudit) stages.push({ stage, ms });
+    const parent = trace.setSpan(context.active(), root);
+    // One measurement feeds the Prometheus histogram, the audit trace and a child span.
+    const record = (stage: StageName, start: number) => {
+      const end = this.now();
+      this.metrics.stage(stage, end - start);
+      if (onAudit) stages.push({ stage, ms: end - start });
+      this.tracer
+        .startSpan(`guardrail.${stage}`, { startTime: toEpochMs(start) }, parent)
+        .end(toEpochMs(end));
     };
     const timed = <T>(stage: StageName, fn: () => T): T => {
       const start = this.now();
       try {
         return fn();
       } finally {
-        record(stage, this.now() - start);
+        record(stage, start);
       }
     };
     const authStart = this.now();
@@ -58,7 +101,7 @@ export class CheckToolCall {
     try {
       claims = await this.auth.verify(token);
     } finally {
-      record('auth', this.now() - authStart);
+      record('auth', authStart);
     }
     const parsed = ToolCallSchema.safeParse(body);
     if (!parsed.success) throw new HttpError(400, 'INVALID_TOOL_CALL');
@@ -115,7 +158,7 @@ export class CheckToolCall {
           },
         });
       } finally {
-        record('inference', this.now() - start);
+        record('inference', start);
       }
     }
     const result = timed('decision', () => ({

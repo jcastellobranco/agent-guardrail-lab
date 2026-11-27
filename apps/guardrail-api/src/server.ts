@@ -4,11 +4,18 @@ import { refreshSignedCache } from './infrastructure/signed-cache.js';
 import { readFile } from 'node:fs/promises';
 import { HttpInferenceClient } from './infrastructure/http-inference-client.js';
 import { HttpToolUpstream } from './infrastructure/http-tool-upstream.js';
+import { startTracing } from './infrastructure/tracing.js';
 import { buildApp } from './app.js';
 import { readConfig } from './config.js';
 import { JwtVerifier } from './infrastructure/jwt.js';
 import { MemoryPolicyStore } from './infrastructure/memory-policy-store.js';
 const config = readConfig();
+const tracing = config.OTEL_EXPORTER_OTLP_ENDPOINT
+  ? startTracing({
+      endpoint: config.OTEL_EXPORTER_OTLP_ENDPOINT,
+      serviceName: config.OTEL_SERVICE_NAME,
+    })
+  : undefined;
 const pem = await readFile(config.JWT_PUBLIC_KEY_PATH, 'utf8');
 const auth = await JwtVerifier.fromPem(
   { [config.JWT_KEY_ID]: pem },
@@ -76,6 +83,7 @@ app.addHook('onClose', async () => {
   if (refreshTimer) clearInterval(refreshTimer);
   await audit?.close();
   await auditPool?.end();
+  await tracing?.shutdown();
 });
 for (const signal of ['SIGINT', 'SIGTERM'] as const)
   process.once(signal, () => {
