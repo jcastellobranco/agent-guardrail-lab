@@ -46,13 +46,15 @@ jobs:
         with: {node-version: '22'}
       - run: corepack enable && corepack prepare pnpm@10.12.4 --activate
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @lab/control-plane... build
+      - run: pnpm --filter @lab/control-plane... --filter @lab/local-audit... build
       - name: Apply migrations
         run: pnpm --filter @lab/database migrate
       - name: Verify migration replay
         run: pnpm --filter @lab/database migrate
       - name: Run real PostgreSQL tests
         run: pnpm --filter @lab/control-plane exec vitest run tests/database.test.ts --reporter=verbose
+      - name: Run audit queue LISTEN/NOTIFY tests
+        run: pnpm --filter @lab/local-audit exec vitest run tests/worker.database.test.ts --reporter=verbose
       - name: PostgreSQL diagnostics
         if: failure()
         run: docker logs ${{ job.services.postgres.id }}
