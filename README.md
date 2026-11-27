@@ -102,7 +102,7 @@ For standalone Python: `make inference-setup`, `make inference-test`, `make infe
 
 | Service | Role |
 |---|---|
-| guardrail-api | `POST /v1/check`, `/health/live`, `/health/ready`, `/health/serving`, `/metrics` |
+| guardrail-api | `POST /v1/check` (advisory), `POST /v1/proxy/:tool` (enforcing), `/health/live`, `/health/ready`, `/health/serving`, `/metrics` |
 | inference-service | `POST /v1/score`, health endpoints; internal only |
 | control-plane | `/v1/admin/tenants`, nested `/agents`, `/policy`, `/token`, `/revoke`; `/v1/sync/:tenantId/bundle`, `/probe-versions`, `/telemetry` |
 | sync-agent | Outbound polling, no inbound port; signed file atomic rename |
@@ -110,6 +110,30 @@ For standalone Python: `make inference-setup`, `make inference-test`, `make infe
 | telemetry-exporter | Local aggregate observations, durable window cursor and authenticated HTTPS upload |
 
 Admin endpoints use a distinct high-entropy bearer credential; sync endpoints use tenant-scoped credentials. The lab exposes list/create/update/soft-delete operations and rejects non-increasing policy versions. Tenant/agent/policy deletion means deactivation, not destructive history removal. Bundle and JWT signing keys are separated. The sync agent authenticates HTTPS, verifies signatures over exact serialized bytes, rejects unknown keys, cross-tenant bundles, expired incoming bundles and non-increasing versions. Guardrail verifies again. A signed snapshot survives restart on a persistent local volume. A compromised filesystem can still roll back the whole persistent volume. Bundle freshness is based on issuance, not reload time. When unreachable, the last valid cache continues until maximum age or expiry; after that, per-policy failure mode applies. `/health/ready` reports freshness, `/health/serving` reports whether a snapshot is loaded so the Helm service still routes stale-policy checks.
+
+## Proxy mode: enforcement instead of advice
+
+`POST /v1/check` returns a decision and trusts the caller to respect it. That is an SDK-style check: a buggy, compromised or prompt-injected agent can skip the call, ignore a `block`, or treat an error as permission, because it still holds a direct route to the tool.
+
+`POST /v1/proxy/:tool` removes that route. The agent sends the call to the guardrail, which runs the same evaluation and forwards it to the tool's upstream URL only when the decision permits it:
+
+| Decision | Response | Reaches the tool? |
+|---|---|---|
+| `allow` | 200 `{forwarded: true, decision, upstream: {status, body}}` | yes |
+| `flag` | 200 (default) or 403 with `PROXY_FLAGGED_CALLS=block` | per configuration |
+| `block`, including fail-closed inference timeouts and stale policy | 403 `{forwarded: false, decision}` | no |
+| invalid token, invalid body, tool name mismatch, evaluation error | 400/401/403/503 | no |
+| permitted but no upstream configured | 404 `TOOL_NOT_REGISTERED` | no |
+| upstream unreachable, timed out or oversized response | 502 | attempted |
+
+Configure the allowlist with `TOOL_UPSTREAMS_JSON` (tool name to URL) and the tool timeout with `TOOL_UPSTREAM_TIMEOUT_MS`. Only URLs in that map are ever contacted, so the proxy cannot be steered at arbitrary hosts. The tool name comes from the path and must match the body, so the evaluated call is the forwarded call. The agent's JWT is not forwarded. The tool receives `x-guardrail-decision-id` and `x-guardrail-outcome` so it can correlate with the audit trail.
+
+The guarantee depends on the network, not the code: the tool must accept traffic only from the guardrail. In Compose, `mock-tool` has no published port and sits on the internal data network. In Kubernetes this means a NetworkPolicy, or mTLS where the tool verifies the guardrail's identity. The latency budget covers the decision only; tool execution time is bounded separately.
+
+```bash
+# after the Quickstart stack is up
+make proxy-demo   # allowed → 200, over limit → 403, flagged → 200
+```
 
 ## Model and probe evaluation
 
@@ -176,7 +200,7 @@ This runs two scenarios on the same machine, creates a new JWT per run, captures
 
 ## Limitations and next steps
 
-- This service advises a caller; it cannot enforce tool execution unless integrated into the agent's actual execution path. MCP proxy/SDK are stretch goals.
+- `/v1/check` is advisory. `/v1/proxy/:tool` enforces only if the network prevents direct agent-to-tool traffic. The proxy speaks plain JSON over HTTP, not MCP. Flag handling is a deployment setting, not part of the per-agent policy.
 - Toy dataset and small model cannot establish jailbreak detection efficacy. Add representative multilingual, adversarial and independently labeled evaluation sets, calibration, shadow/canary rollout and reviewed thresholds.
 - A 50 ms default budget is a target, not a hard SLA. CPU inference may frequently time out; load-test before choosing hardware/model and concurrency.
 - Local key files and sync credentials are a lab mechanism. Add KMS/rotation, trusted enrollment, mTLS, per-tenant rate limits, RLS/non-owner DB roles for pool mode, supply-chain pinning and independent security review.
