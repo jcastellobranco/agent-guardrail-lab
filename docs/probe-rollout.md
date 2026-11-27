@@ -38,3 +38,25 @@ Add a `shadow` block to a probe configuration:
 - The control plane lists shadow keys in the bundle's `probeVersions` and in `/probe-versions`, so data planes provision those artifacts too.
 
 **Trade-off:** a shadow that the inference service has not loaded makes the request fail (`UNKNOWN_PROBE_VERSION`), and the policy's fail mode applies. So a broken shadow configuration *can* affect decisions. Signed artifact sync (below) closes this gap: the bundle is accepted only once every listed artifact is present.
+
+## 2. Canary rollout with automatic rollback
+
+Once shadow metrics look good, let the candidate decide for a share of agents:
+
+```bash
+curl -X PUT http://127.0.0.1:8002/v1/admin/tenants/tenant-a/probe-rollouts/jailbreak \
+  -H "authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' \
+  -d '{"stableVersion":"1.0.0","canaryVersion":"2.0.0","flagThreshold":0.5,"blockThreshold":0.85,
+       "percent":10,"maxBlockRateIncrease":0.05,"minSamples":200}'
+```
+
+- **Who gets the canary.** When building each bundle, the control plane hashes `tenant:probe:canaryVersion:agent` with SHA-256 and puts the agent in the canary if `hash mod 100 < percent`. Assignment is deterministic and sticky. Ramping from 10 % to 30 % (the same `PUT` with a new `percent`) keeps the first 10 % and adds more. The stored policy is never modified: substitution happens only in the signed bundle, and only for configurations that use `stableVersion`.
+- **When it rolls back.** After every telemetry ingest, the control plane sums probe decisions per version since the rollout started, across all of the tenant's deployments. If both versions have at least `minSamples` decisions and `canaryRate − stableRate > maxBlockRateIncrease`, the rollout becomes `rolled_back` with a reason, and the next bundle pull puts every agent back on the stable version. Changing versions during an active rollout returns `409`; abort or promote it first.
+- **Rollback speed** is one telemetry window (1 min) plus one bundle poll (`SYNC_INTERVAL_MS`). There is no push.
+- `GET .../probe-rollouts` shows status, reason and timestamps. `POST .../:probeId/abort` stops a rollout manually.
+
+**Why block rate:** it is the cheapest signal that needs no labels, and a probe that suddenly blocks more is the most visible way a bad probe hurts users. It cannot detect a probe that blocks *less* (missed attacks). That needs labelled evaluation (the CI FPR gate) or shadow comparison against a reviewed sample. Telemetry counts are aggregates only, so the comparison never needs raw traces.
+
+## 3. Promote
+
+`POST .../probe-rollouts/:probeId/promote` rewrites, in one transaction, every stored policy that uses the stable version: new version, new thresholds, and a bumped policy version. Promotion lives in the policies, not in the rollout row, so it survives the next rollout replacing that row.
