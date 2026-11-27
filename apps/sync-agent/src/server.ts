@@ -18,6 +18,8 @@ const c = {
   ]),
   path: get('SIGNED_BUNDLE_PATH'),
   allowHttp: process.env.ALLOW_INSECURE_LOCAL_HTTP === '1',
+  // Opt-in: download signed probe artifacts into the inference service's artifact volume.
+  artifactDir: process.env.PROBE_ARTIFACT_DIR || undefined,
 };
 const interval = Number(process.env.SYNC_INTERVAL_MS ?? 30000);
 if (!Number.isFinite(interval) || interval < 1000) throw new Error('Invalid poll interval');
