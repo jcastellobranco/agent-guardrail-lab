@@ -15,6 +15,13 @@
       "when": 1760000000001,
       "tag": "0001_expand_display_name",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1760000000002,
+      "tag": "0002_probe_rollouts",
+      "breakpoints": true
     }
   ]
 }

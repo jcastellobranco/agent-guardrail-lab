@@ -1,4 +1,13 @@
-import { pgTable, text, integer, jsonb, primaryKey, boolean, timestamp } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  text,
+  integer,
+  jsonb,
+  primaryKey,
+  boolean,
+  timestamp,
+  doublePrecision,
+} from 'drizzle-orm/pg-core';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
 export const tenants = pgTable('tenants', {
@@ -55,6 +64,31 @@ export const telemetry = pgTable(
   },
   (t) => [primaryKey({ columns: [t.tenantId, t.deploymentId, t.windowStart] })],
 );
+export const ROLLOUT_STATUSES = ['active', 'rolled_back', 'promoted', 'aborted'] as const;
+export type RolloutStatus = (typeof ROLLOUT_STATUSES)[number];
+/** One canary rollout per tenant and probe; a finished rollout is replaced by the next one. */
+export const probeRollouts = pgTable(
+  'probe_rollouts',
+  {
+    tenantId: text('tenant_id')
+      .notNull()
+      .references(() => tenants.id),
+    probeId: text('probe_id').notNull(),
+    stableVersion: text('stable_version').notNull(),
+    canaryVersion: text('canary_version').notNull(),
+    flagThreshold: doublePrecision('flag_threshold').notNull(),
+    blockThreshold: doublePrecision('block_threshold').notNull(),
+    percent: integer('percent').notNull(),
+    maxBlockRateIncrease: doublePrecision('max_block_rate_increase').notNull(),
+    minSamples: integer('min_samples').notNull(),
+    status: text('status', { enum: ROLLOUT_STATUSES }).notNull(),
+    reason: text('reason'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+  },
+  (t) => [primaryKey({ columns: [t.tenantId, t.probeId] })],
+);
+export type ProbeRollout = typeof probeRollouts.$inferSelect;
 export function database(url: string) {
   const pool = new pg.Pool({ connectionString: url, max: 10 });
   return { pool, db: drizzle(pool) };
