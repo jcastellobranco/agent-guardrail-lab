@@ -179,6 +179,15 @@ importers:
         specifier: 2.9.1
         version: 2.9.1
 
+  packages/sdk:
+    dependencies:
+      '@lab/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+
 packages:
 
   '@drizzle-team/brocli@0.10.2':
