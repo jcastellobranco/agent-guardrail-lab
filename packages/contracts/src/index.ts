@@ -104,15 +104,32 @@ export const ProbeSegment = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$/
 export const ProbeKey = z
   .string()
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$/);
+const Threshold = z.number().min(0).max(1);
+/** A candidate probe version scored alongside the current one; it never affects the decision. */
+export const ShadowProbeSchema = z
+  .object({ version: ProbeSegment, flagThreshold: Threshold, blockThreshold: Threshold })
+  .strict()
+  .refine((p) => p.flagThreshold < p.blockThreshold);
 export const ProbeConfigurationSchema = z
   .object({
     probeId: ProbeSegment,
     version: ProbeSegment,
-    flagThreshold: z.number().min(0).max(1),
-    blockThreshold: z.number().min(0).max(1),
+    flagThreshold: Threshold,
+    blockThreshold: Threshold,
+    shadow: ShadowProbeSchema.optional(),
   })
   .strict()
-  .refine((p) => p.flagThreshold < p.blockThreshold);
+  .refine((p) => p.flagThreshold < p.blockThreshold)
+  .refine((p) => p.shadow?.version !== p.version, 'Shadow version must differ from current');
+export type ProbeConfiguration = z.infer<typeof ProbeConfigurationSchema>;
+/** Every `probeId:version` a policy needs scored, current versions first, then shadows. */
+export function probeKeys(policy: { probes: { configurations: readonly ProbeConfiguration[] } }) {
+  const configs = policy.probes.configurations;
+  return [
+    ...configs.map((c) => `${c.probeId}:${c.version}`),
+    ...configs.flatMap((c) => (c.shadow ? [`${c.probeId}:${c.shadow.version}`] : [])),
+  ];
+}
 export const AgentPolicySchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -139,6 +156,9 @@ export const AgentPolicySchema = z
       ctx.addIssue({ code: 'custom', message: 'Duplicate probe id' });
     if (p.probes.enabled && !p.probes.configurations.length)
       ctx.addIssue({ code: 'custom', message: 'Enabled probes require configurations' });
+    // One inference request scores current and shadow versions; it accepts at most 32 keys.
+    if (probeKeys(p).length > 32)
+      ctx.addIssue({ code: 'custom', message: 'At most 32 probe versions including shadows' });
   });
 export type AgentPolicy = z.infer<typeof AgentPolicySchema>;
 export const ReasonSchema = z

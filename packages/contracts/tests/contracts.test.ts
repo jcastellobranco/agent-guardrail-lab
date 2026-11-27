@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { ToolCallSchema, TelemetryWindowSchema, ProbeConfigurationSchema } from '../src/index.js';
+import {
+  ToolCallSchema,
+  TelemetryWindowSchema,
+  ProbeConfigurationSchema,
+  probeKeys,
+} from '../src/index.js';
 const call = { agentId: 'agent', tool: 'read', arguments: { amount: 3 } };
 describe('contracts', () => {
   it('accepts a valid call', () => expect(ToolCallSchema.safeParse(call).success).toBe(true));
@@ -23,6 +28,31 @@ describe('contracts', () => {
         version: 'v1',
         flagThreshold: 0.9,
         blockThreshold: 0.8,
+      }).success,
+    ).toBe(false));
+  it('accepts a shadow candidate and lists its key after the current versions', () => {
+    const config = {
+      probeId: 'jailbreak',
+      version: '1.0.0',
+      flagThreshold: 0.5,
+      blockThreshold: 0.8,
+      shadow: { version: '2.0.0', flagThreshold: 0.4, blockThreshold: 0.7 },
+    };
+    expect(ProbeConfigurationSchema.safeParse(config).success).toBe(true);
+    expect(
+      probeKeys({
+        probes: { configurations: [config, { ...config, probeId: 'pii', shadow: undefined }] },
+      }),
+    ).toEqual(['jailbreak:1.0.0', 'pii:1.0.0', 'jailbreak:2.0.0']);
+  });
+  it('rejects a shadow identical to the current version', () =>
+    expect(
+      ProbeConfigurationSchema.safeParse({
+        probeId: 'p',
+        version: 'v1',
+        flagThreshold: 0.5,
+        blockThreshold: 0.8,
+        shadow: { version: 'v1', flagThreshold: 0.5, blockThreshold: 0.8 },
       }).success,
     ).toBe(false));
   it('rejects raw trace fields in nested telemetry', () => {

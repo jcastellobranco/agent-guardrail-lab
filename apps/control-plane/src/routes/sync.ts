@@ -2,7 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import type { ControlDatabase } from '../config.js';
 import { randomUUID } from 'node:crypto';
 import { and, eq, gt, sql } from 'drizzle-orm';
-import { Id, AgentPolicySchema, TelemetryWindowSchema, PolicyBundleSchema } from '@lab/contracts';
+import {
+  Id,
+  AgentPolicySchema,
+  TelemetryWindowSchema,
+  PolicyBundleSchema,
+  probeKeys,
+} from '@lab/contracts';
 import { signBundle } from '@lab/bundles';
 import { tenants, agents, policies, revocations, telemetry } from '@lab/database';
 import type { Config } from '../config.js';
@@ -30,10 +36,9 @@ export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c
           .filter((p) => p.active && active.has(p.agentId))
           .map((p) => AgentPolicySchema.parse(p.body));
         const now = Date.now();
+        // Includes shadow versions, so data planes provision every artifact they will score.
         const probeVersions: Record<string, string> = {};
-        for (const p of parsed)
-          for (const v of p.probes.configurations)
-            probeVersions[`${v.probeId}:${v.version}`] = v.version;
+        for (const key of parsed.flatMap(probeKeys)) probeVersions[key] = key.split(':')[1]!;
         return PolicyBundleSchema.parse({
           schemaVersion: 1,
           bundleId: randomUUID(),
@@ -72,15 +77,7 @@ export function registerSyncRoutes(sync: FastifyInstance, db: ControlDatabase, c
         ),
       );
     return {
-      probeVersions: [
-        ...new Set(
-          rows.flatMap((r) =>
-            AgentPolicySchema.parse(r.body).probes.configurations.map(
-              (p) => `${p.probeId}:${p.version}`,
-            ),
-          ),
-        ),
-      ],
+      probeVersions: [...new Set(rows.flatMap((r) => probeKeys(AgentPolicySchema.parse(r.body))))],
     };
   });
   sync.post('/:tenantId/telemetry', async (req, reply) => {
